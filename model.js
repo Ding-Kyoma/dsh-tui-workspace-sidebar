@@ -244,6 +244,16 @@ export const RANK_RUNNING = 1;
 export const RANK_DONE = 2;
 
 /**
+ * How many already-read finished conversations one project may show.
+ *
+ * The cap is per project and display-only: running and unread rows are never
+ * trimmed, and the tracker keeps every row the retention window allows. It
+ * bounds how far back a busy project's history reaches without shortening the
+ * window itself.
+ */
+export const DONE_ROWS_PER_PROJECT = 10;
+
+/**
  * The triage class of a row. A failed finish is still a finish: it belongs in
  * the unread class until it has been read or leaves the retention window.
  *
@@ -536,12 +546,44 @@ function compareByTriage(left, right) {
 }
 
 /**
+ * Trim a project's already-read finished rows to the display cap.
+ *
+ * `rows` must already be sorted by {@link compareByTriage}, which puts unread
+ * and running rows first and orders the done class newest-first. Only the
+ * trailing done class is affected. The attached conversation is guaranteed a
+ * slot: when it is a done row outside the cap, it displaces the oldest kept row
+ * so the list never exceeds the cap and the panel always has a row to land on.
+ *
+ * @param {readonly SidebarRow[]} rows
+ * @param {string} currentId
+ * @returns {SidebarRow[]}
+ */
+function capDoneRows(rows, currentId) {
+  const done = rows.filter(row => rankOf(row) === RANK_DONE);
+  if (done.length <= DONE_ROWS_PER_PROJECT) return rows;
+  const kept = new Set(done.slice(0, DONE_ROWS_PER_PROJECT));
+  const current = done.find(row => String(row.id) === currentId);
+  if (current !== undefined && !kept.has(current)) {
+    kept.delete(done[DONE_ROWS_PER_PROJECT - 1]);
+    kept.add(current);
+  }
+  return rows.filter(row => rankOf(row) !== RANK_DONE || kept.has(row));
+}
+
+/**
  * Group visible rows by project, triage class first and newest state second
  * inside each project. Projects follow the same class priority — a project
  * whose top row is unread leads, then one with a running conversation, then the
  * rest — so the very first rows of the panel are always the ones that want
  * attention. Within a class the same anchor is used, so projects holding
  * concurrent running conversations do not swap either.
+ *
+ * At most {@link DONE_ROWS_PER_PROJECT} already-read finished conversations are
+ * listed per project. Running and unread rows are never trimmed, and the
+ * attached conversation keeps a slot even when an older read row would
+ * otherwise be cut. The cap is display-only: the tracker still retains rows for
+ * the whole retention window, so the next-oldest conversation appears once a
+ * kept row leaves.
  *
  * The attached session is listed too; it is simply never counted as unread.
  *
@@ -584,7 +626,7 @@ export function buildGroups(rows, registry, currentId, options = {}) {
   }
 
   const projects = [...buckets.values()].map(bucket => {
-    const list = [...bucket.rows].sort(compareByTriage);
+    const list = capDoneRows([...bucket.rows].sort(compareByTriage), current);
     let running = 0;
     let unread = 0;
     for (const row of list) {

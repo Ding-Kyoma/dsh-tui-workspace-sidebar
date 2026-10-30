@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTracker } from '../tracker.js';
+import { DONE_ROWS_PER_PROJECT } from '../model.js';
 
 function makeAgent({ id, status = 'idle', cwd = '/repo/app', origin = 'user', events = [] }) {
   return {
@@ -398,4 +399,30 @@ test('the attached-session probe overrides the panel-reported current id', () =>
   agent.status = 'idle';
   harness.emit('agent/status', { agent, status: 'idle' });
   assert.equal(tracker.getSnapshot().unread, 0);
+});
+
+test('the per-project display cap never prunes persisted read rows', async () => {
+  const now = 100_000;
+  const persisted = {};
+  for (let index = 0; index < DONE_ROWS_PER_PROJECT + 2; index += 1) {
+    const at = now - index * 1_000;
+    persisted[`r${index}`] = {
+      id: `r${index}`,
+      cwd: '/repo/app',
+      title: `R${index}`,
+      status: 'finished',
+      failed: false,
+      updatedAt: at,
+      finishedAt: at,
+      seenAt: at,
+    };
+  }
+  const store = makeStore(persisted);
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now });
+  await tracker.load();
+  const snapshot = tracker.getSnapshot();
+  assert.equal(DONE_ROWS_PER_PROJECT, 10);
+  assert.equal(snapshot.groups[0].rows.length, DONE_ROWS_PER_PROJECT);
+  // The cap is display-only: the state file still keeps every retained row.
+  assert.equal(Object.keys(store.snapshot().sessions).length, DONE_ROWS_PER_PROJECT + 2);
 });

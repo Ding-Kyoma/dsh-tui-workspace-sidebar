@@ -8,11 +8,11 @@ project, one line per conversation, hover to highlight, click to jump.
 
 ```
 ⠋ 1 运行 · ● 1 未读
-▾ dsh-plugins
+▸ dsh-plugins
   ● 重写 README               5 分钟前
   ⠋ 给补丁跑个验证            2 分钟前
 ❯ ✓ 修复登录页样式            刚刚
-▾ other-project
+▸ other-project
   ✓ 更新部署脚本              3 小时前
 ↑↓ 选择 · Enter 跳转 · m 已读 · r 刷新
 ```
@@ -36,6 +36,7 @@ process:
 - **Finished and already read** — jumping to a conversation (or pressing `m`)
   no longer removes it; the dot becomes a dim `✓` and the row stays for the
   rest of the retention window, so the place you just came from is still there.
+  At most ten read rows are listed per project (see below).
 
 A finished conversation — read or unread — is swept once it has been idle for
 **6 hours** (`retentionHours`, configurable). The attached conversation is
@@ -57,6 +58,13 @@ falls back to the session id. Projects follow the same class priority, so the
 first rows of the panel are always the ones that want attention. The relative
 time on the right still reports the last activity (it is also what the retention
 window uses).
+
+Each project lists at most **10 already-read** conversations. Running and unread
+rows are never capped, and the attached conversation always keeps a slot: when it
+is an older read row it displaces the tenth, so the panel never loses the row you
+are on. The cap is display-only — the state file still retains everything the
+retention window allows, so the next-oldest conversation appears when one of the
+kept rows expires.
 
 Everything else is hidden: idle sessions that never ran, subagents, and
 projects with nothing to triage. The attached session is never counted as
@@ -199,5 +207,7 @@ finished rows to their finish marker, so concurrent running conversations never
 swap as their logs advance), subagent/no-prompt filtering, grouping, store
 atomicity/corruption, the jump failure matrix, the animated running counters,
 the plan-mode spinner colour (row-only; header and project counters stay
-muted), hover-only row fill, and the panel/scene/command/shortcut registration
-(including feature-detected degradation).
+muted), the per-project cap on read rows (running and unread exempt, attached
+row pinned), the right-pointing project glyph, hover-only row fill, and the
+panel/scene/command/shortcut registration (including feature-detected
+degradation).

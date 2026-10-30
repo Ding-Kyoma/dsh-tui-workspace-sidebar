@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_RETENTION_MS,
+  DONE_ROWS_PER_PROJECT,
   RANK_DONE,
   RANK_RUNNING,
   RANK_UNREAD,
@@ -290,6 +291,72 @@ test('buildGroups: a class beats recency inside a project', () => {
     buildGroups(rows, [], '', { now }).flatRows.map(item => item.id),
     ['unread-newer', 'unread-oldest', 'running', 'read-newest'],
   );
+});
+
+test('buildGroups: caps already-read conversations at 10 per project', () => {
+  const now = 100_000;
+  const rows = [];
+  for (let index = 0; index < 12; index += 1) {
+    rows.push(row({
+      id: `a-done-${index}`,
+      cwd: '/repo/app',
+      finishedAt: 1_000 + index,
+      updatedAt: 1_000 + index,
+      seenAt: 1_000 + index,
+    }));
+    rows.push(row({
+      id: `b-done-${index}`,
+      cwd: '/repo/other',
+      finishedAt: 2_000 + index,
+      updatedAt: 2_000 + index,
+      seenAt: 2_000 + index,
+    }));
+  }
+  rows.push(row({ id: 'a-run', cwd: '/repo/app', status: 'running', runningAt: 3_000, finishedAt: 0, updatedAt: 3_000 }));
+  rows.push(row({ id: 'a-unread', cwd: '/repo/app', finishedAt: 4_000, updatedAt: 4_000, seenAt: 0 }));
+  rows.push(row({ id: 'b-unread', cwd: '/repo/other', finishedAt: 5_000, updatedAt: 5_000, seenAt: 0 }));
+
+  const result = buildGroups(rows, [], '', { now });
+  const groupOf = key => result.groups.find(group => group.key === key);
+  const doneOf = group => group.rows.filter(item => rankOf(item) === RANK_DONE).map(item => item.id);
+
+  assert.equal(DONE_ROWS_PER_PROJECT, 10);
+  // The cap is per project: each one keeps its own newest ten read rows.
+  assert.deepEqual(doneOf(groupOf('/repo/app')), [
+    'a-done-11', 'a-done-10', 'a-done-9', 'a-done-8', 'a-done-7',
+    'a-done-6', 'a-done-5', 'a-done-4', 'a-done-3', 'a-done-2',
+  ]);
+  assert.deepEqual(doneOf(groupOf('/repo/other')), [
+    'b-done-11', 'b-done-10', 'b-done-9', 'b-done-8', 'b-done-7',
+    'b-done-6', 'b-done-5', 'b-done-4', 'b-done-3', 'b-done-2',
+  ]);
+  // Running and unread rows are never part of the cap.
+  assert.ok(groupOf('/repo/app').rows.some(item => item.id === 'a-run'));
+  assert.ok(groupOf('/repo/app').rows.some(item => item.id === 'a-unread'));
+  assert.ok(groupOf('/repo/other').rows.some(item => item.id === 'b-unread'));
+  assert.equal(result.running, 1);
+  assert.equal(result.unread, 2);
+  // 20 kept read rows + 1 running + 2 unread, so the panel total may exceed 10.
+  assert.equal(result.flatRows.length, 23);
+});
+
+test('buildGroups: the attached read conversation keeps a slot inside the cap', () => {
+  const now = 100_000;
+  const rows = [];
+  for (let index = 0; index < 12; index += 1) {
+    rows.push(row({
+      id: `done-${index}`,
+      finishedAt: 1_000 + index,
+      updatedAt: 1_000 + index,
+      seenAt: 1_000 + index,
+    }));
+  }
+  const result = buildGroups(rows, [], 'done-0', { now });
+  const ids = result.groups[0].rows.map(item => item.id);
+  assert.equal(ids.filter(id => id.startsWith('done-')).length, 10);
+  assert.ok(ids.includes('done-0'), 'the attached conversation is never capped away');
+  assert.ok(!ids.includes('done-2'), 'the oldest kept row yields its slot');
+  assert.equal(selectedRow(result.flatRows, null, 'done-0').id, 'done-0');
 });
 
 test('buildGroups: projects follow the same class priority', () => {
