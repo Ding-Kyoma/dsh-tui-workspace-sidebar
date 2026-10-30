@@ -320,6 +320,20 @@ test('panel: every real workspace header offers a + new-session target', () => {
   assert.deepEqual(harness.opened, ['jump']);
 });
 
+test('panel: the + is the last cell on the header line, past the counters', () => {
+  const harness = createHarness();
+  const header = findBox(harness.render(), 'g:/repo/app');
+  const children = header.children;
+  const counterIndex = children.findIndex(child => textOf(child).includes(`${RUNNING_FRAMES[0]}1`));
+  const plusIndex = children.findIndex(child => child?.props?.key === 'new:/repo/app');
+  assert.ok(counterIndex >= 0, 'the running counter is on the line');
+  assert.ok(plusIndex > counterIndex, 'the + follows the counter');
+  assert.equal(plusIndex, children.length - 1, 'the + is the last cell');
+  assert.equal(children[plusIndex - 1].props.flexGrow, 1, 'a spacer pushes it right');
+  assert.equal(children[plusIndex].props.paddingX, 1, 'the hit target is wider than the glyph');
+  assert.equal(textOf(children[plusIndex]), '+');
+});
+
 test('panel: the + highlights on hover without filling the header', () => {
   const harness = createHarness();
   const plus = findBox(harness.render(), 'new:/repo/app');

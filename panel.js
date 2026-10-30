@@ -275,16 +275,24 @@ export function createPanel(options) {
           color: hovered ? 'accent' : undefined,
           wrap: 'truncate-end',
         }, `▸ ${group.title || strings.unknownProject}`),
-        // A fresh conversation in this workspace, like `/new` in that cwd.
-        // Kept outside the title Text so its click is its own hit target; the
-        // group header itself has no click action.
+        counts.length > 0
+          ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, counts.join(' ')))
+          : null,
+        // The `+` starts a fresh conversation in this workspace, like `/new`
+        // in that cwd. The spacer parks it at the right edge (after the
+        // counters) and the padding widens its click target beyond the glyph.
+        // It stays outside the title Text so the click is its own hit target;
+        // the group header itself has no click action.
+        group.cwd !== ''
+          ? h(Box, { key: 'spacer', flexGrow: 1 })
+          : null,
         group.cwd !== ''
           ? h(
             Box,
             {
               key: `new:${group.key}`,
               flexShrink: 0,
-              marginLeft: 1,
+              paddingX: 1,
               onMouseEnter: () => setPlusHoverKey(group.key),
               onMouseLeave: () => setPlusHoverKey(current => (current === group.key ? null : current)),
               onClick: event => {
@@ -298,9 +306,6 @@ export function createPanel(options) {
               color: plusHovered ? 'accent' : undefined,
             }, '+'),
           )
-          : null,
-        counts.length > 0
-          ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, counts.join(' ')))
           : null,
       );
     }
