@@ -260,11 +260,12 @@ test('buildGroups: lists the current conversation and recent read rows in triage
   assert.equal(result.running, 1);
   // The attached session is visible but never counted as unread.
   assert.equal(result.unread, 2);
-  // Unread leads even in the older project; inside a project the classes are
-  // unread, then running, then read, each newest-first.
-  assert.deepEqual(result.groups.map(group => group.title), ['other', 'App']);
-  assert.deepEqual(result.groups[1].rows.map(item => item.id), ['unread-old', 'run', 'current', 'read']);
-  assert.deepEqual(result.flatRows.map(item => item.id), ['unread-new', 'unread-old', 'run', 'current', 'read']);
+  // Classes decide first; inside the unread class projects keep their first-seen
+  // order. Inside a project the classes are unread, then running, then read,
+  // each newest-first.
+  assert.deepEqual(result.groups.map(group => group.title), ['App', 'other']);
+  assert.deepEqual(result.groups[0].rows.map(item => item.id), ['unread-old', 'run', 'current', 'read']);
+  assert.deepEqual(result.flatRows.map(item => item.id), ['unread-old', 'run', 'current', 'read', 'unread-new']);
 });
 
 test('rankOf: unread finish, then running, then everything already read', () => {
@@ -398,9 +399,41 @@ test('buildGroups: projects with running conversations keep a stable order', () 
   const now = 10_000;
   const a = row({ id: 'a', cwd: '/repo/one', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
   const b = row({ id: 'b', cwd: '/repo/two', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 2_000 });
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['two', 'one']);
-  a.updatedAt = 9_000; // churn inside project one's turn
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['two', 'one']);
+
+  // Inside the running class the first-seen project leads and stays there.
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+
+  // Turns starting on either side must not reorder the projects; in-turn
+  // activity must not either.
+  a.runningAt = 9_000;
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  b.runningAt = 9_500;
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  a.updatedAt = 9_900;
+  b.updatedAt = 9_950;
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+});
+
+test('buildGroups: a new turn in one workspace does not reorder groups', () => {
+  const now = 10_000;
+  const a = row({ id: 'a', cwd: '/repo/one', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
+  const b = row({ id: 'b', cwd: '/repo/two', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
+
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  b.runningAt = 9_000; // the other workspace starts a new turn
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+});
+
+test('buildGroups: a new unread finish does not reorder projects in the unread class', () => {
+  const now = 10_000;
+  const a = row({ id: 'a', cwd: '/repo/one', finishedAt: 100, updatedAt: 100, seenAt: 0 });
+  const b = row({ id: 'b', cwd: '/repo/two', finishedAt: 9_000, updatedAt: 9_000, seenAt: 0 });
+
+  // Both are unread; the newer finish must not leapfrog the first-seen project.
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  b.finishedAt = 9_500;
+  b.updatedAt = 9_500;
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
 });
 
 test('buildGroups: an exact anchor tie falls back to the session id', () => {

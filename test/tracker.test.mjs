@@ -151,6 +151,30 @@ test('two running sessions keep a stable order while their logs advance', () => 
   assert.deepEqual(order(), ['a', 'b'], 'the new turn stays anchored');
 });
 
+test('workspace groups keep their order while both workspaces start new turns', () => {
+  let clock = 10_000;
+  const eventsA = [promptEvent('fix a', 100), turnStart(100)];
+  const eventsB = [promptEvent('fix b', 200), turnStart(200)];
+  const a = makeAgent({ id: 'a', status: 'running', cwd: '/repo/one', events: eventsA });
+  const b = makeAgent({ id: 'b', status: 'running', cwd: '/repo/two', events: eventsB });
+  const { tracker, harness } = makeTracker({ agents: [a, b], clock: () => clock });
+
+  const groups = () => tracker.getSnapshot().groups.map(group => group.title);
+  assert.deepEqual(groups(), ['one', 'two']);
+
+  for (let index = 0; index < 3; index += 1) {
+    clock += 1_000;
+    eventsA.push(turnStart(clock));
+    harness.emit('agent/status', { agent: a, status: 'running' });
+    assert.deepEqual(groups(), ['one', 'two'], 'a new turn in one workspace must not reorder groups');
+
+    clock += 1_000;
+    eventsB.push(turnStart(clock));
+    harness.emit('agent/status', { agent: b, status: 'running' });
+    assert.deepEqual(groups(), ['one', 'two'], 'a new turn in the other workspace must not reorder groups');
+  }
+});
+
 test('a running row is anchored to the turn in its log, not to activation time', () => {
   const agent = makeAgent({
     id: 'a',

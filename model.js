@@ -575,8 +575,9 @@ function capDoneRows(rows, currentId) {
  * inside each project. Projects follow the same class priority — a project
  * whose top row is unread leads, then one with a running conversation, then the
  * rest — so the very first rows of the panel are always the ones that want
- * attention. Within a class the same anchor is used, so projects holding
- * concurrent running conversations do not swap either.
+ * attention. Inside a class projects keep a fixed order: the slot where the
+ * project was first seen, never an activity timestamp, so a new turn in one
+ * workspace cannot make projects trade places while they both run.
  *
  * At most {@link DONE_ROWS_PER_PROJECT} already-read finished conversations are
  * listed per project. Running and unread rows are never trimmed, and the
@@ -612,6 +613,8 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     }
   }
 
+  // First-seen slot per project: the stable sort key inside a triage class.
+  // It comes from the tracker's row order, not from any activity clock.
   const order = new Map();
   const buckets = new Map();
   for (const row of visible) {
@@ -649,10 +652,11 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     const leftRank = left.rows.length > 0 ? rankOf(left.rows[0]) : RANK_DONE;
     const rightRank = right.rows.length > 0 ? rankOf(right.rows[0]) : RANK_DONE;
     if (leftRank !== rightRank) return leftRank - rightRank;
-    const leftNewest = left.rows.length > 0 ? orderAtOf(left.rows[0]) : 0;
-    const rightNewest = right.rows.length > 0 ? orderAtOf(right.rows[0]) : 0;
-    if (leftNewest !== rightNewest) return rightNewest - leftNewest;
-    return left.order - right.order;
+    // Inside a class, sort by when the project first appeared — not by
+    // `orderAtOf`. The running anchor tracks the current turn start, so using
+    // it here made two running workspaces swap places on every new turn.
+    if (left.order !== right.order) return left.order - right.order;
+    return left.key.localeCompare(right.key);
   });
 
   const flatRows = [];
