@@ -263,11 +263,11 @@ export function createPanel(options) {
     function renderGroup(group) {
       const hovered = hoverId === `g:${group.key}`;
       const plusHovered = plusHoverKey === group.key;
-      // Project headers carry status icons, not counts: the same glyph the rows
-      // use for "running" (the chat spinner) and "unread" (the green dot), at
-      // the same frame and in the same colour. The numbers live in the panel's
-      // header total, so the folder icon and the conversation icons cannot
-      // drift apart.
+      // Project headers carry status icons, not counts: the same character the
+      // rows use for "running" (the chat spinner) and "unread" (the dot), so the
+      // folder icon turns in lockstep with the conversation icons. The header
+      // keeps its muted chrome colour, and the numbers live in the panel's
+      // header total.
       const counts = [];
       if (group.running > 0) counts.push(counterGlyph('running', frame));
       if (group.unread > 0) counts.push(counterGlyph('unread', frame));
@@ -297,11 +297,10 @@ export function createPanel(options) {
               flexDirection: 'row',
               gap: 1,
             },
-            counts.map((glyph, index) => h(Text, {
+            counts.map((char, index) => h(Text, {
               key: `c${index}`,
-              color: glyph.color,
-              dimColor: glyph.dim,
-            }, glyph.char)),
+              dimColor: true,
+            }, char)),
           )
           : null,
         // The `+` starts a fresh conversation in this workspace, like `/new`

@@ -933,28 +933,27 @@ export function glyphFor(row, frame) {
 }
 
 /**
- * The status icon a project header shows for one state.
+ * The status character a project header shows for one state.
  *
- * A project counter is not a count any more: it is the same glyph the row
- * would show in that state, so the folder icon and the conversation icons are
- * the same character in the same colour at the same frame. The numbers live in
- * the panel's header total.
+ * A project counter is not a count any more: it reuses the row glyph's
+ * character, so the folder icon turns in lockstep with the conversation icons.
+ * The header keeps its own muted chrome style — no row colour, no numbers; the
+ * counts live in the panel's header total.
  *
- * `'running'` mirrors a plain running row — the chat spinner in the normal
- * running colour; a plan-mode row keeps its own sage colour because the
- * counter aggregates turns, not modes. `'unread'` mirrors the finished-unread
- * dot. Both delegate to {@link glyphFor}, so the two vocabularies cannot drift
- * apart.
+ * `'running'` uses the plain running frame; a plan-mode row's sage colour stays
+ * on that row only, because the counter aggregates turns, not modes.
+ * `'unread'` uses the finished-unread dot. Both delegate to {@link glyphFor},
+ * so the characters cannot drift apart.
  *
  * @param {'running' | 'unread'} kind
  * @param {number} frame
- * @returns {{char: string, color: string | undefined, dim: boolean}}
+ * @returns {string}
  */
 export function counterGlyph(kind, frame) {
   if (kind === 'unread') {
-    return glyphFor({ status: 'finished', failed: false, finishedAt: 1, seenAt: 0 }, frame);
+    return glyphFor({ status: 'finished', failed: false, finishedAt: 1, seenAt: 0 }, frame).char;
   }
-  return glyphFor({ status: 'running' }, frame);
+  return glyphFor({ status: 'running' }, frame).char;
 }
 
 /**

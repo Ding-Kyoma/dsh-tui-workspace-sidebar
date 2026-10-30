@@ -284,8 +284,10 @@ test('panel: project counters and rows animate while the header stays static', (
   assert.ok(firstCounter, 'the project counter is rendered');
   const firstGlyphs = directTexts(firstCounter);
   assert.deepEqual(firstGlyphs.map(textOf), ['⠋', '●'], 'status icons only, no counts');
-  assert.equal(firstGlyphs[0].props.color, 'suggestion');
-  assert.equal(firstGlyphs[1].props.color, 'success');
+  assert.equal(firstGlyphs[0].props.color, undefined, 'the header keeps its muted chrome colour');
+  assert.equal(firstGlyphs[1].props.color, undefined);
+  assert.equal(firstGlyphs[0].props.dimColor, true);
+  assert.equal(firstGlyphs[1].props.dimColor, true);
 
   harness.setTick(400); // floor(400 / 80) % 10 = 5
   const second = textLines(harness.render());
@@ -297,8 +299,9 @@ test('panel: project counters and rows animate while the header stays static', (
   const runGlyph = directTexts(findBox(harness.render(), 'run'))[0];
   assert.equal(textOf(counterGlyphs[0]), frame, 'the project counter still spins');
   assert.equal(textOf(runGlyph), frame, 'the running row glyph still spins');
-  assert.equal(counterGlyphs[0].props.color, runGlyph.props.color, 'the folder icon uses the row colour');
-  assert.equal(counterGlyphs[0].props.dimColor, runGlyph.props.dimColor, 'the folder icon uses the row dim state');
+  assert.equal(counterGlyphs[0].props.color, undefined, 'the folder icon stays muted');
+  assert.equal(counterGlyphs[0].props.dimColor, true);
+  assert.equal(runGlyph.props.color, 'suggestion', 'the row keeps its running colour');
 });
 
 test('panel: the current row has no fill, hover fills it and leaving clears it', () => {
@@ -361,7 +364,8 @@ test('panel: only a running plan-mode row spins in the plan colour', () => {
   assert.equal(plainGlyph.props.color, 'suggestion');
 
   // The header total is plain text and carries no spinner. The project counter
-  // is icon-only and uses the normal running colour, not the plan colour.
+  // is icon-only, keeps the header's muted colour, and never takes the plan
+  // colour (that belongs to the row).
   const texts = textNodes(tree);
   const header = texts.find(node => textOf(node).includes('2 运行'));
   assert.ok(header, 'the header total is rendered');
@@ -371,8 +375,8 @@ test('panel: only a running plan-mode row spins in the plan colour', () => {
   const counter = directTexts(findBox(tree, 'counters:/repo/app'));
   assert.equal(counter.length, 1, 'running only: one status icon');
   assert.equal(textOf(counter[0]), RUNNING_FRAMES[0]);
-  assert.equal(counter[0].props.color, 'suggestion');
-  assert.equal(counter[0].props.dimColor, false);
+  assert.equal(counter[0].props.color, undefined);
+  assert.equal(counter[0].props.dimColor, true);
   assert.doesNotMatch(textOf(counter[0]), /\d/);
 });
 
@@ -385,8 +389,10 @@ test('panel: project counters are icon-only and share the header gap', () => {
   const glyphs = directTexts(counter);
   assert.deepEqual(glyphs.map(textOf), ['⠋', '●']);
   assert.doesNotMatch(textOf(counter), /\d/, 'the project header carries no counts');
-  assert.equal(glyphs[0].props.dimColor, false);
-  assert.equal(glyphs[1].props.dimColor, false);
+  assert.equal(glyphs[0].props.dimColor, true);
+  assert.equal(glyphs[1].props.dimColor, true);
+  assert.equal(glyphs[0].props.color, undefined);
+  assert.equal(glyphs[1].props.color, undefined);
 });
 
 test('panel: project headings use a right-pointing triangle', () => {

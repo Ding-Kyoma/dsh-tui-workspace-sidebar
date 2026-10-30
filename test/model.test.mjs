@@ -727,28 +727,27 @@ test('spinnerGlyph: every running count shares one frame and junk settles on the
   assert.equal(spinnerGlyph(Number.POSITIVE_INFINITY), RUNNING_FRAMES[0]);
 });
 
-test('counterGlyph: a project icon is exactly the row glyph for that state', () => {
-  // Every frame, the folder spinner must be the plain running row's glyph —
-  // same character, same colour, same dim state — so the two animate as one.
+test('counterGlyph: a project icon is exactly the row glyph character for that state', () => {
+  // Every frame, the folder spinner must be the plain running row's character
+  // so the two rotate as one; the header keeps its own muted colour.
   for (let frame = -2; frame < RUNNING_FRAMES.length + 3; frame += 1) {
-    assert.deepEqual(counterGlyph('running', frame), glyphFor({ status: 'running' }, frame));
+    assert.equal(counterGlyph('running', frame), glyphFor({ status: 'running' }, frame).char);
   }
-  assert.deepEqual(counterGlyph('running', 0), { char: '⠋', color: 'suggestion', dim: false });
-  assert.deepEqual(counterGlyph('running', 5), { char: '⠴', color: 'suggestion', dim: false });
+  assert.equal(counterGlyph('running', 0), '⠋');
+  assert.equal(counterGlyph('running', 5), '⠴');
 
-  // A plan-mode row keeps its own colour, but the counter aggregates turns and
-  // stays on the normal running colour.
+  // A plan-mode row keeps its own colour on its own row; the counter only
+  // borrows the character and stays muted in the header.
   assert.equal(glyphFor({ status: 'running', plan: true }, 0).color, 'planMode');
-  assert.equal(counterGlyph('running', 0).color, 'suggestion');
+  assert.equal(counterGlyph('running', 0), '⠋');
 });
 
 test('counterGlyph: the unread icon is the finished-unread dot, without a count', () => {
-  assert.deepEqual(counterGlyph('unread', 0), { char: '●', color: 'success', dim: false });
-  assert.deepEqual(
+  assert.equal(counterGlyph('unread', 0), '●');
+  assert.equal(
     counterGlyph('unread', 7),
-    glyphFor({ status: 'finished', failed: false, finishedAt: 1, seenAt: 0 }, 7),
+    glyphFor({ status: 'finished', failed: false, finishedAt: 1, seenAt: 0 }, 7).char,
   );
-  assert.equal(counterGlyph('unread', 0).char, '●');
 });
 
 test('formatWhen: relative labels and a clock-safe fallback', () => {
