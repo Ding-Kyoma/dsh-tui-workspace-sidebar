@@ -50,7 +50,7 @@ process:
   At most ten read rows are listed per project (see below).
 
 A finished conversation — read or unread — is swept once it has been idle for
-**6 hours** (`retentionHours`, configurable). The attached conversation is
+**7 days** (`retentionHours`, configurable). The attached conversation is
 always listed and is the default selection: a `❯` cursor marks it while the
 panel has focus, and a tinted title keeps it findable otherwise. Its row is
 never filled; only the row under the mouse gets the highlight background. It is
@@ -114,12 +114,13 @@ replaces the whole `config`, so restate every key you need):
     lang: auto                                  # auto | zh | en
     stateFile: ~/.dsh-tui/workspace-sidebar.json
     shortcut: alt+w                             # off disables it
-    retentionHours: 6                           # 0 = drop a row as soon as it is read
+    retentionHours: 168                         # 7 days; 0 = drop a row as soon as it is read
     relayQuestions: true                        # false disables the background-question relay
 ```
 
 `retentionHours` accepts fractions (useful to watch the sweep happen) and is
-capped at 720 (30 days). The row cap of 300 stays as a hard bound.
+capped at 720 (30 days). The default is 168 (7 days). The row cap of 300 stays
+as a hard bound.
 
 `relayQuestions` is on by default. It is the fallback for background
 `ask_user_question` / `exit_plan_mode` (see below); set it to `false` if the
@@ -279,6 +280,10 @@ The `waiting` / `waitingAt` flags are in-memory only: the store's field
 whitelist drops them, so a restart never shows a green dot for a question whose
 tool call is gone. A corrupt file is preserved as
 `workspace-sidebar.json.corrupt-<epoch>` before an empty state is used.
+
+Raising `retentionHours` is forward-looking: a row that was already pruned is
+not rebuilt from the session logs. Resuming that conversation makes it a live
+row again.
 
 ## Limitations
 

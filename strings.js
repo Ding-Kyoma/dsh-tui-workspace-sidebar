@@ -11,6 +11,16 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+/**
+ * Format a day count without noisy trailing zeros (`7`, `1.5`).
+ * @param {number} value
+ * @returns {string}
+ */
+function formatDays(value) {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
 const ZH = {
   lang: 'zh',
   title: '收件箱',
@@ -23,6 +33,7 @@ const ZH = {
   emptyHint(hours) {
     const value = Number(hours);
     if (!(value > 0)) return '读过的会话会立即移除';
+    if (value >= 24) return `最近 ${formatDays(value / 24)} 天活跃过的会话会显示在这里`;
     return `最近 ${value} 小时活跃过的会话会显示在这里`;
   },
   liveUnavailable: '当前内核不提供实时会话状态，只显示磁盘上的记录',
@@ -71,6 +82,10 @@ const EN = {
   emptyHint(hours) {
     const value = Number(hours);
     if (!(value > 0)) return 'Read conversations are removed immediately';
+    if (value >= 24) {
+      const days = formatDays(value / 24);
+      return `Conversations active in the last ${days} day${days === '1' ? '' : 's'} show up here`;
+    }
     return `Conversations active in the last ${value}h show up here`;
   },
   liveUnavailable: 'This kernel exposes no live session status; showing persisted records only',

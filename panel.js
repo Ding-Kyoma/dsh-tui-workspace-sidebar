@@ -3,7 +3,7 @@
  *
  * One line per conversation, grouped under its project: what is running now,
  * what finished and was never read, and what finished recently enough to stay
- * in reach (six hours by default). Hover highlights, a click jumps (through the
+ * in reach (seven days by default). Hover highlights, a click jumps (through the
  * transition scene), and the keyboard drives the same actions while the panel
  * is focused. The attached conversation is always listed and is the default
  * selection, so the highlight says where you are before you move it.

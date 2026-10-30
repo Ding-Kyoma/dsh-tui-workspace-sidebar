@@ -4,7 +4,7 @@
  * One tracker per plugin activation. It folds the core agent registry (and its
  * `agent/created|status|disposed` events) into the tiny row set the panel
  * shows: conversations that are running now, or that finished recently enough
- * to still be worth a glance (the retention window, six hours by default).
+ * to still be worth a glance (the retention window, seven days by default).
  * Reading a row does not remove it; it settles into the dim "seen" state and
  * is swept when the window closes.
  *
@@ -557,8 +557,8 @@ export function createTracker(options) {
         // A row persisted as running was interrupted by the last shutdown; it
         // is history now, not an unfinished task this process can report on.
         if (row.status !== 'finished') continue;
-        // Read rows are restored too: "finished six hours ago" is exactly the
-        // half-day of context this list is meant to keep.
+        // Read rows are restored too: "finished a week ago" is exactly the
+        // horizon this list is meant to keep.
         if (!isVisible(row, { currentId, now, retentionMs })) continue;
         if (rows.has(id)) continue;
         rows.set(id, { ...row });

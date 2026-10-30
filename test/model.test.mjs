@@ -32,6 +32,10 @@ import {
 
 const HOUR = 60 * 60 * 1000;
 
+test('the default retention window is one week', () => {
+  assert.equal(DEFAULT_RETENTION_MS, 7 * 24 * HOUR);
+});
+
 function row(overrides = {}) {
   return {
     id: 's1',
@@ -458,11 +462,12 @@ test('buildGroups: falls back to basename and keeps unknown directories together
 
 test('isVisible: running and attached rows stay, finished rows follow the retention window', () => {
   const now = 10 * HOUR;
-  assert.equal(isVisible(row({ status: 'running', finishedAt: 0, updatedAt: now }), { now }), true);
-  assert.equal(isVisible(row({ id: 'a', updatedAt: now - HOUR, finishedAt: now - HOUR }), { now }), true);
-  assert.equal(isVisible(row({ id: 'a', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR }), { now }), false);
+  const window = { now, retentionMs: 6 * HOUR };
+  assert.equal(isVisible(row({ status: 'running', finishedAt: 0, updatedAt: now }), window), true);
+  assert.equal(isVisible(row({ id: 'a', updatedAt: now - HOUR, finishedAt: now - HOUR }), window), true);
+  assert.equal(isVisible(row({ id: 'a', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR }), window), false);
   assert.equal(
-    isVisible(row({ id: 'a', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR }), { now, currentId: 'a' }),
+    isVisible(row({ id: 'a', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR }), { ...window, currentId: 'a' }),
     true,
     'the attached session is pinned even past the window',
   );
@@ -479,7 +484,7 @@ test('buildGroups: hides expired rows, keeps the current one, and honours a zero
     row({ id: 'recent', updatedAt: now - HOUR, finishedAt: now - HOUR, seenAt: now - HOUR }),
     row({ id: 'current', updatedAt: now - 30 * HOUR, finishedAt: now - 30 * HOUR, seenAt: now - 30 * HOUR }),
   ];
-  const kept = buildGroups(rows, [], 'current', { now });
+  const kept = buildGroups(rows, [], 'current', { now, retentionMs: 6 * HOUR });
   assert.deepEqual(kept.flatRows.map(item => item.id), ['recent', 'current']);
   assert.equal(kept.unread, 0);
 
@@ -510,7 +515,7 @@ test('pruneRows: sweeps expired rows, pins the attached one, and respects the ca
   rows.set('read', row({ id: 'read', updatedAt: now - HOUR, finishedAt: now - HOUR, seenAt: now - HOUR }));
   rows.set('current', row({ id: 'current', updatedAt: now - 10 * HOUR, finishedAt: now - 10 * HOUR, seenAt: now - 10 * HOUR }));
   rows.set('live', row({ id: 'live', status: 'running', finishedAt: 0, updatedAt: now }));
-  pruneRows(rows, 10, now, { currentId: 'current' });
+  pruneRows(rows, 10, now, { currentId: 'current', retentionMs: 6 * HOUR });
   assert.equal(rows.has('expired'), false);
   assert.equal(rows.has('read'), true);
   assert.equal(rows.has('current'), true);
@@ -520,7 +525,7 @@ test('pruneRows: sweeps expired rows, pins the attached one, and respects the ca
   capped.set('a', row({ id: 'a', updatedAt: now - 5 * HOUR, finishedAt: now - 5 * HOUR }));
   capped.set('b', row({ id: 'b', updatedAt: now - 4 * HOUR, finishedAt: now - 4 * HOUR }));
   capped.set('current', row({ id: 'current', updatedAt: now - 9 * HOUR, finishedAt: now - 9 * HOUR }));
-  pruneRows(capped, 2, now, { currentId: 'current' });
+  pruneRows(capped, 2, now, { currentId: 'current', retentionMs: 6 * HOUR });
   assert.equal(capped.has('a'), false);
   assert.equal(capped.has('b'), true);
   assert.equal(capped.has('current'), true);

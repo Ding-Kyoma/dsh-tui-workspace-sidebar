@@ -1,7 +1,7 @@
 /**
  * Workspace sidebar — a lightweight right-side panel listing the conversations
  * that are running now, finished unread, or finished recently enough to stay in
- * reach (six hours idle by default), grouped by project.
+ * reach (seven days idle by default), grouped by project.
  *
  * Design notes that explain the shape of this file:
  *
@@ -36,7 +36,7 @@ export const PANEL_ICON = '▣';
 export const PANEL_ORDER = 10;
 export const DEFAULT_SHORTCUT = 'alt+w';
 /** Finished conversations linger this long after their last activity. */
-export const DEFAULT_RETENTION_HOURS = 6;
+export const DEFAULT_RETENTION_HOURS = 7 * 24;
 /** A month is plenty; the 300-row cap bounds memory long before that. */
 const MAX_RETENTION_HOURS = 720;
 

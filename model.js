@@ -20,7 +20,7 @@ export const RUNNING_FRAME_MS = 80;
  * into a dim checkmark and is swept once the window closes. The attached
  * session is pinned regardless of age — it is where the person is looking.
  */
-export const DEFAULT_RETENTION_MS = 6 * 60 * 60 * 1000;
+export const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Finished-unread rows are highlighted for this long after they land. */
 export const FRESH_FINISH_MS = 4_000;

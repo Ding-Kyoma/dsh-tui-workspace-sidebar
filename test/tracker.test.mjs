@@ -72,9 +72,9 @@ function planEvent(active, time = 100) {
   return { type: 'plan/mode', time, data: { active } };
 }
 
-function makeTracker({ agents = [], store = makeStore(), clock = () => 1_000, probe } = {}) {
+function makeTracker({ agents = [], store = makeStore(), clock = () => 1_000, probe, retentionMs } = {}) {
   const harness = makeCtx({ getAgents: { list: () => agents } });
-  const tracker = createTracker({ ctx: harness.ctx, store, logger: { warn() {} }, now: clock, probe });
+  const tracker = createTracker({ ctx: harness.ctx, store, logger: { warn() {} }, now: clock, probe, retentionMs });
   tracker.attach();
   return { tracker, harness, store };
 }
@@ -315,11 +315,34 @@ test('load restores recent finished rows, drops stale running and expired rows',
     c: { id: 'c', cwd: '/repo/app', title: 'C', status: 'finished', failed: false, updatedAt: now - HOUR, finishedAt: now - HOUR, seenAt: now - HOUR + 1 },
     d: { id: 'd', cwd: '/repo/app', title: 'D', status: 'finished', failed: false, updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR, seenAt: 0 },
   });
-  const { tracker } = makeTracker({ agents: [], store, clock: () => now });
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now, retentionMs: 6 * HOUR });
   await tracker.load();
   const snapshot = tracker.getSnapshot();
   assert.equal(snapshot.unread, 1);
   assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a', 'c']);
+});
+
+test('the default retention window keeps a finished row from six days ago', async () => {
+  const HOUR = 60 * 60 * 1000;
+  const now = 10 * 24 * HOUR;
+  const previous = (id, age) => ({
+    id,
+    cwd: '/repo/app',
+    title: id,
+    status: 'finished',
+    failed: false,
+    updatedAt: now - age,
+    finishedAt: now - age,
+    seenAt: 0,
+  });
+  const store = makeStore({
+    recent: previous('recent', 6 * 24 * HOUR),
+    stale: previous('stale', 8 * 24 * HOUR),
+  });
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now });
+  await tracker.load();
+  const snapshot = tracker.getSnapshot();
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['recent']);
 });
 
 test('load settles a persisted unread row for the attached session as read', async () => {
@@ -340,7 +363,7 @@ test('reconcile sweeps a finished row once the retention window closes', () => {
   const HOUR = 60 * 60 * 1000;
   let clock = 10 * HOUR;
   const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
-  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock, retentionMs: 6 * HOUR });
   clock = 11 * HOUR;
   agent.status = 'idle';
   harness.emit('agent/status', { agent, status: 'idle' });

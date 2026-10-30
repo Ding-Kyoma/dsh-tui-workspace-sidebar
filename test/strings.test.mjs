@@ -44,6 +44,19 @@ test('the idle footer leaves the focus key to the host', () => {
   }
 });
 
+test('the empty hint states the window in days once it spans a day', () => {
+  const zh = messagesFor('zh');
+  const en = messagesFor('en');
+  assert.equal(zh.emptyHint(168), '最近 7 天活跃过的会话会显示在这里');
+  assert.equal(en.emptyHint(168), 'Conversations active in the last 7 days show up here');
+  assert.equal(zh.emptyHint(36), '最近 1.5 天活跃过的会话会显示在这里');
+  assert.equal(en.emptyHint(36), 'Conversations active in the last 1.5 days show up here');
+  assert.equal(zh.emptyHint(6), '最近 6 小时活跃过的会话会显示在这里');
+  assert.equal(en.emptyHint(6), 'Conversations active in the last 6h show up here');
+  assert.equal(zh.emptyHint(0), '读过的会话会立即移除');
+  assert.equal(en.emptyHint(0), 'Read conversations are removed immediately');
+});
+
 test('waiting copy exists in both languages', () => {
   assert.equal(messagesFor('zh').waiting, '待回答');
   assert.equal(messagesFor('en').waiting, 'needs you');

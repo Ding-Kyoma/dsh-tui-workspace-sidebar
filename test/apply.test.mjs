@@ -102,12 +102,12 @@ async function makeHarness({ withPanels = true } = {}) {
 }
 
 test('normalizeConfig: retentionHours defaults, accepts fractions, zero, and clamps', () => {
-  assert.equal(DEFAULT_RETENTION_HOURS, 6);
-  assert.equal(normalizeConfig({}).retentionHours, 6);
+  assert.equal(DEFAULT_RETENTION_HOURS, 168);
+  assert.equal(normalizeConfig({}).retentionHours, 168);
   assert.equal(normalizeConfig({ retentionHours: 0 }).retentionHours, 0);
   assert.equal(normalizeConfig({ retentionHours: 0.001 }).retentionHours, 0.001);
-  assert.equal(normalizeConfig({ retentionHours: -1 }).retentionHours, 6);
-  assert.equal(normalizeConfig({ retentionHours: 'abc' }).retentionHours, 6);
+  assert.equal(normalizeConfig({ retentionHours: -1 }).retentionHours, 168);
+  assert.equal(normalizeConfig({ retentionHours: 'abc' }).retentionHours, 168);
   assert.equal(normalizeConfig({ retentionHours: 10_000 }).retentionHours, 720);
 });
 
