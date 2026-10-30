@@ -904,8 +904,9 @@ export function spinnerGlyph(frame) {
  *
  * A running plan-mode conversation keeps the same spinner character and dim
  * state but borrows the theme's plan colour, so the row says "this turn is
- * planning" without a second glyph. Only the row glyphs take that colour: the
- * project counters keep counting turns, not modes.
+ * planning" without a second glyph. Only row glyphs take that colour: the
+ * project counter always shows the normal running colour ({@link counterGlyph}),
+ * because it aggregates every running conversation in the workspace.
  *
  * @param {SidebarRow} row
  * @param {number} frame
@@ -929,6 +930,31 @@ export function glyphFor(row, frame) {
   }
   if (row?.failed) return { char: '✕', color: 'error', dim: false };
   return { char: '●', color: 'success', dim: false };
+}
+
+/**
+ * The status icon a project header shows for one state.
+ *
+ * A project counter is not a count any more: it is the same glyph the row
+ * would show in that state, so the folder icon and the conversation icons are
+ * the same character in the same colour at the same frame. The numbers live in
+ * the panel's header total.
+ *
+ * `'running'` mirrors a plain running row — the chat spinner in the normal
+ * running colour; a plan-mode row keeps its own sage colour because the
+ * counter aggregates turns, not modes. `'unread'` mirrors the finished-unread
+ * dot. Both delegate to {@link glyphFor}, so the two vocabularies cannot drift
+ * apart.
+ *
+ * @param {'running' | 'unread'} kind
+ * @param {number} frame
+ * @returns {{char: string, color: string | undefined, dim: boolean}}
+ */
+export function counterGlyph(kind, frame) {
+  if (kind === 'unread') {
+    return glyphFor({ status: 'finished', failed: false, finishedAt: 1, seenAt: 0 }, frame);
+  }
+  return glyphFor({ status: 'running' }, frame);
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   applyRowState,
   basename,
   buildGroups,
+  counterGlyph,
   emptyFold,
   fitGroups,
   foldAgentEvents,
@@ -724,6 +725,30 @@ test('spinnerGlyph: every running count shares one frame and junk settles on the
   assert.equal(spinnerGlyph(-1), RUNNING_FRAMES[1]);
   assert.equal(spinnerGlyph(Number.NaN), RUNNING_FRAMES[0]);
   assert.equal(spinnerGlyph(Number.POSITIVE_INFINITY), RUNNING_FRAMES[0]);
+});
+
+test('counterGlyph: a project icon is exactly the row glyph for that state', () => {
+  // Every frame, the folder spinner must be the plain running row's glyph —
+  // same character, same colour, same dim state — so the two animate as one.
+  for (let frame = -2; frame < RUNNING_FRAMES.length + 3; frame += 1) {
+    assert.deepEqual(counterGlyph('running', frame), glyphFor({ status: 'running' }, frame));
+  }
+  assert.deepEqual(counterGlyph('running', 0), { char: '⠋', color: 'suggestion', dim: false });
+  assert.deepEqual(counterGlyph('running', 5), { char: '⠴', color: 'suggestion', dim: false });
+
+  // A plan-mode row keeps its own colour, but the counter aggregates turns and
+  // stays on the normal running colour.
+  assert.equal(glyphFor({ status: 'running', plan: true }, 0).color, 'planMode');
+  assert.equal(counterGlyph('running', 0).color, 'suggestion');
+});
+
+test('counterGlyph: the unread icon is the finished-unread dot, without a count', () => {
+  assert.deepEqual(counterGlyph('unread', 0), { char: '●', color: 'success', dim: false });
+  assert.deepEqual(
+    counterGlyph('unread', 7),
+    glyphFor({ status: 'finished', failed: false, finishedAt: 1, seenAt: 0 }, 7),
+  );
+  assert.equal(counterGlyph('unread', 0).char, '●');
 });
 
 test('formatWhen: relative labels and a clock-safe fallback', () => {

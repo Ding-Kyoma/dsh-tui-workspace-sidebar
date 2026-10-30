@@ -19,12 +19,12 @@ import {
   RUNNING_FRAME_MS,
   RUNNING_FRAMES,
   basename,
+  counterGlyph,
   fitGroups,
   formatWhen,
   glyphFor,
   normalizeCwd,
   selectedRow,
-  spinnerGlyph,
 } from './model.js';
 import { messagesFor, resolveLang } from './strings.js';
 
@@ -84,10 +84,6 @@ export function createPanel(options) {
     const running = data.running > 0;
     const tick = ui.useAnimationTime(running ? RUNNING_FRAME_MS : 1000);
     const frame = Math.floor(tick / RUNNING_FRAME_MS) % RUNNING_FRAMES.length;
-    // One spinner character for the project counters and the rows, so both
-    // animate in lockstep instead of freezing on ⠋. The header total is plain
-    // text and deliberately stays still.
-    const spinner = spinnerGlyph(frame);
     const now = Date.now();
     const showTime = width >= 30;
 
@@ -267,9 +263,14 @@ export function createPanel(options) {
     function renderGroup(group) {
       const hovered = hoverId === `g:${group.key}`;
       const plusHovered = plusHoverKey === group.key;
+      // Project headers carry status icons, not counts: the same glyph the rows
+      // use for "running" (the chat spinner) and "unread" (the green dot), at
+      // the same frame and in the same colour. The numbers live in the panel's
+      // header total, so the folder icon and the conversation icons cannot
+      // drift apart.
       const counts = [];
-      if (group.running > 0) counts.push(`${spinner}${group.running}`);
-      if (group.unread > 0) counts.push(`●${group.unread}`);
+      if (group.running > 0) counts.push(counterGlyph('running', frame));
+      if (group.unread > 0) counts.push(counterGlyph('unread', frame));
       return h(
         Box,
         {
@@ -287,7 +288,21 @@ export function createPanel(options) {
           wrap: 'truncate-end',
         }, `▸ ${group.title || strings.unknownProject}`),
         counts.length > 0
-          ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, counts.join(' ')))
+          ? h(
+            Box,
+            {
+              key: `counters:${group.key}`,
+              flexShrink: 0,
+              marginLeft: 1,
+              flexDirection: 'row',
+              gap: 1,
+            },
+            counts.map((glyph, index) => h(Text, {
+              key: `c${index}`,
+              color: glyph.color,
+              dimColor: glyph.dim,
+            }, glyph.char)),
+          )
           : null,
         // The `+` starts a fresh conversation in this workspace, like `/new`
         // in that cwd. It sits right after the counters (the right of every

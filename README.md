@@ -5,11 +5,11 @@ A light right-side panel for dsh-tui that answers one question at a glance:
 
 It uses a normal side-panel tab instead of a full-screen view: grouped by
 project, one line per conversation, hover to highlight, click to jump. A `+`
-after a project's counters starts a fresh conversation in that workspace.
+after a project's status icons starts a fresh conversation in that workspace.
 
 ```
  2 运行 · ● 2 未读
-▸ dsh-plugins ⠋2 ●2 +
+▸ dsh-plugins ⠋ ● +
   ● 后台计划                  待回答
   ● 重写 README               5 分钟前
   ⠋ 给补丁跑个验证            2 分钟前
@@ -26,12 +26,15 @@ process:
 
 - **Running** — the session's agent is inside a turn. Row glyphs and each
   project's counter use the chat's own braille spinner, frame for frame (80
-  ms), so they spin in lockstep. The header's running count is plain text: it
-  carries no spinner and stays still. A row whose agent is in **plan mode**
-  (the durable `plan/mode` selection written by `dsh-plan-mode`) spins in the
-  theme's plan colour — sage green on the default dark palette, the same role
-  the status line uses — while project counters keep their muted spinner. Only
-  a running row is coloured; a finished conversation never keeps it.
+  ms), and the counter reuses the row glyph's character and colour. A project
+  header is therefore icon-only: `⠋` while anything there runs, `●` while
+  something there is unread, with the numbers kept in the header total above.
+  A row whose agent is in **plan mode** (the durable `plan/mode` selection
+  written by `dsh-plan-mode`) spins in the theme's plan colour — sage green on
+  the default dark palette, the same role the status line uses — while the
+  project counter keeps the normal running colour, because it aggregates
+  turns, not modes. Only a running row is coloured; a finished conversation
+  never keeps it.
 - **Finished but unread** — a turn ended while you were in another session. The
   row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
   first few seconds.
@@ -181,7 +184,7 @@ conversation you came from is still one click away until its window closes.
 
 ### New session from a workspace header
 
-`+` sits after the running/unread counters on every project header, to the
+`+` sits after the running/unread status icons on every project header, to the
 right of all the header icons. Its cell is padded on both sides, so the click
 target is a little wider than the glyph; `n` does the same for the workspace of
 the selected row. The `+` is omitted for the "unknown project" bucket, which
@@ -355,9 +358,10 @@ their turns advance), subagent/no-prompt filtering, grouping, store
 atomicity/corruption, the jump failure matrix, the new-session decision table
 (`/new` vs workspace handoff vs `/bg`, refusals and thrown host calls), the
 workspace `+`/`n` affordance (including the hidden unknown-project case and
-the padded `+` after the counters), the
-animated row glyphs and project counters (the header total is static), the
-plan-mode spinner colour (row-only; project counters stay muted), the
+the padded `+` after the status icons), the
+animated row glyphs and icon-only project counters (same character and colour
+as the row glyphs at every frame; the header total is static and holds the
+numbers), the plan-mode spinner colour (row-only), the
 per-project cap on read rows (running and
 unread exempt, attached row pinned), the height-adaptive folding of read rows
 (cap lowered until the grouped list fits, a floor of three per project, and a

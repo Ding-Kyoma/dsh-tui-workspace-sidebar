@@ -279,17 +279,26 @@ test('panel: project counters and rows animate while the header stays static', (
   const harness = createHarness();
   const first = textLines(harness.render());
   assert.ok(first.includes(' 1 运行 · ● 1 未读'), first.join('\n'));
-  assert.ok(first.some(line => line.includes('⠋1')), first.join('\n'));
+
+  const firstCounter = findBox(harness.render(), 'counters:/repo/app');
+  assert.ok(firstCounter, 'the project counter is rendered');
+  const firstGlyphs = directTexts(firstCounter);
+  assert.deepEqual(firstGlyphs.map(textOf), ['⠋', '●'], 'status icons only, no counts');
+  assert.equal(firstGlyphs[0].props.color, 'suggestion');
+  assert.equal(firstGlyphs[1].props.color, 'success');
 
   harness.setTick(400); // floor(400 / 80) % 10 = 5
   const second = textLines(harness.render());
   const frame = RUNNING_FRAMES[5];
   assert.equal(frame, '⠴');
   assert.ok(second.includes(' 1 运行 · ● 1 未读'), 'the header total stays still');
-  assert.ok(second.some(line => line.includes(`${frame}1`)), 'the project counter still spins');
 
+  const counterGlyphs = directTexts(findBox(harness.render(), 'counters:/repo/app'));
   const runGlyph = directTexts(findBox(harness.render(), 'run'))[0];
+  assert.equal(textOf(counterGlyphs[0]), frame, 'the project counter still spins');
   assert.equal(textOf(runGlyph), frame, 'the running row glyph still spins');
+  assert.equal(counterGlyphs[0].props.color, runGlyph.props.color, 'the folder icon uses the row colour');
+  assert.equal(counterGlyphs[0].props.dimColor, runGlyph.props.dimColor, 'the folder icon uses the row dim state');
 });
 
 test('panel: the current row has no fill, hover fills it and leaving clears it', () => {
@@ -351,18 +360,33 @@ test('panel: only a running plan-mode row spins in the plan colour', () => {
   assert.equal(textOf(plainGlyph), RUNNING_FRAMES[0]);
   assert.equal(plainGlyph.props.color, 'suggestion');
 
-  // The project counter keeps its muted, uncoloured look; the header total is
-  // now plain text and carries no spinner.
+  // The header total is plain text and carries no spinner. The project counter
+  // is icon-only and uses the normal running colour, not the plan colour.
   const texts = textNodes(tree);
   const header = texts.find(node => textOf(node).includes('2 运行'));
   assert.ok(header, 'the header total is rendered');
   assert.equal(header.props.color, undefined);
   assert.equal(header.props.dimColor, true);
   assert.doesNotMatch(textOf(header), /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
-  const counter = texts.find(node => textOf(node) === `${RUNNING_FRAMES[0]}2`);
+  const counter = directTexts(findBox(tree, 'counters:/repo/app'));
+  assert.equal(counter.length, 1, 'running only: one status icon');
+  assert.equal(textOf(counter[0]), RUNNING_FRAMES[0]);
+  assert.equal(counter[0].props.color, 'suggestion');
+  assert.equal(counter[0].props.dimColor, false);
+  assert.doesNotMatch(textOf(counter[0]), /\d/);
+});
+
+test('panel: project counters are icon-only and share the header gap', () => {
+  const tree = createHarness().render();
+  const counter = findBox(tree, 'counters:/repo/app');
   assert.ok(counter, 'the project counter is rendered');
-  assert.equal(counter.props.color, undefined);
-  assert.equal(counter.props.dimColor, true);
+  assert.equal(counter.props.flexDirection, 'row');
+  assert.equal(counter.props.gap, 1, 'the two status icons stay one cell apart');
+  const glyphs = directTexts(counter);
+  assert.deepEqual(glyphs.map(textOf), ['⠋', '●']);
+  assert.doesNotMatch(textOf(counter), /\d/, 'the project header carries no counts');
+  assert.equal(glyphs[0].props.dimColor, false);
+  assert.equal(glyphs[1].props.dimColor, false);
 });
 
 test('panel: project headings use a right-pointing triangle', () => {
@@ -388,10 +412,10 @@ test('panel: the + follows the counters with padding on both sides', () => {
   const harness = createHarness();
   const header = findBox(harness.render(), 'g:/repo/app');
   const children = header.children;
-  const counterIndex = children.findIndex(child => textOf(child).includes(`${RUNNING_FRAMES[0]}1`));
+  const counterIndex = children.findIndex(child => child?.props?.key === 'counters:/repo/app');
   const plusIndex = children.findIndex(child => child?.props?.key === 'new:/repo/app');
-  assert.ok(counterIndex >= 0, 'the running counter is on the line');
-  assert.equal(plusIndex, counterIndex + 1, 'the + sits directly after the counter');
+  assert.ok(counterIndex >= 0, 'the status icons are on the line');
+  assert.equal(plusIndex, counterIndex + 1, 'the + sits directly after the counters');
   assert.equal(children.length, plusIndex + 1, 'nothing is pushed past the +');
   assert.equal(children[plusIndex].props.paddingX, 1, 'the hit target is wider than the glyph');
   assert.equal(textOf(children[plusIndex]), '+');
