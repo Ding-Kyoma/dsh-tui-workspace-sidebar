@@ -5,10 +5,11 @@
  *
  * Design notes that explain the shape of this file:
  *
- * - A plugin panel gets no channel, so it cannot call `channel.resumeTo`
- *   directly. Clicking a row therefore drops a one-shot target in a queue and
- *   opens a registered scene, whose props *do* carry the live channel; the
- *   scene performs the resume and closes. That transition card is the only
+ * - A plugin panel gets no channel, so it cannot call `channel.resumeTo` or
+ *   `channel.switchWorkspace` directly. Clicking a row (or a workspace's `+`)
+ *   therefore drops a one-shot target in a queue and opens a registered scene,
+ *   whose props *do* carry the live channel; the scene performs the resume or
+ *   the new-session handoff and closes. That transition card is the only
  *   public-API path to a session switch in dsh-tui 0.17.0.
  * - Everything is feature-detected and fail-open: a missing `agents`,
  *   `tuiPanels`, `tuiScenes`, `tuiWorkspaces`, `tuiPluginHost` or `commands`
@@ -148,7 +149,7 @@ export function apply(ctx, config = {}) {
         return;
       }
       if (!scenes || typeof scenes.register !== 'function') {
-        warn('tuiScenes is unavailable; click-to-jump is disabled');
+        warn('tuiScenes is unavailable; sidebar actions are disabled');
         return;
       }
       const Scene = createJumpScene({ queue, tracker, config: settings });
@@ -295,7 +296,7 @@ export function apply(ctx, config = {}) {
       if (!mountPanel(ready, panels)) return;
 
       if (scenes && typeof scenes.register === 'function') mountScene(ready);
-      else warn('tuiScenes is unavailable; click-to-jump is disabled');
+      else warn('tuiScenes is unavailable; sidebar actions are disabled');
 
       if (typeof ready.inject === 'function') {
         ready.inject(['tuiPluginHost'], mountCommand);

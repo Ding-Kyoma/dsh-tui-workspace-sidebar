@@ -7,9 +7,24 @@
  * transition scene), and the keyboard drives the same actions while the panel
  * is focused. The attached conversation is always listed and is the default
  * selection, so the highlight says where you are before you move it.
+ *
+ * Every project header carries a `+` after its title: it starts a fresh
+ * conversation in that workspace (backgrounding the attached one first when it
+ * is still running). The panel has no channel, so the click goes through the
+ * same one-shot queue and transition scene as a row jump.
  */
 
-import { FRESH_FINISH_MS, RUNNING_FRAME_MS, RUNNING_FRAMES, formatWhen, glyphFor, selectedRow, spinnerGlyph } from './model.js';
+import {
+  FRESH_FINISH_MS,
+  RUNNING_FRAME_MS,
+  RUNNING_FRAMES,
+  basename,
+  formatWhen,
+  glyphFor,
+  normalizeCwd,
+  selectedRow,
+  spinnerGlyph,
+} from './model.js';
 import { messagesFor, resolveLang } from './strings.js';
 
 /**
@@ -37,6 +52,10 @@ export function createPanel(options) {
 
     const [selectedId, setSelectedId] = React.useState(null);
     const [hoverId, setHoverId] = React.useState(null);
+    // The header's `+` keeps its own hover state: overwriting `hoverId` would
+    // clear the group's highlight and, because hover does not bubble, the
+    // parent would not re-enter when the pointer moves from `+` to the title.
+    const [plusHoverKey, setPlusHoverKey] = React.useState(null);
     const [top, setTop] = React.useState(0);
 
     const rows = data.flatRows;
@@ -143,6 +162,38 @@ export function createPanel(options) {
       }
     }
 
+    /**
+     * Ask the transition scene for a fresh conversation in `cwd`.
+     * @param {string} cwd
+     * @param {string} [label] workspace title for the scene card / handoff toast
+     */
+    function requestNew(cwd, label) {
+      const path = normalizeCwd(cwd);
+      if (path === '') return;
+      if (!jump.sceneReady()) {
+        host.toast(strings.newUnavailable);
+        return;
+      }
+      jump.queue.request({ kind: 'new', cwd: path, label, lang });
+      if (host.openScene(jump.sceneId) !== true) {
+        jump.queue.clear();
+        host.toast(strings.newUnavailable);
+      }
+    }
+
+    function newSessionIn(group) {
+      if (!group || typeof group.cwd !== 'string' || group.cwd === '') return;
+      requestNew(group.cwd, group.title);
+    }
+
+    function newSessionForSelected() {
+      const row = dataRef.current.flatRows.find(item => item.id === selectedRef.current);
+      if (!row || typeof row.cwd !== 'string' || row.cwd === '') return;
+      const key = normalizeCwd(row.cwd);
+      const group = dataRef.current.groups.find(item => item.key === key);
+      requestNew(row.cwd, group?.title || basename(row.cwd));
+    }
+
     function markSelected() {
       const row = dataRef.current.flatRows.find(item => item.id === selectedRef.current);
       if (!row) return;
@@ -162,6 +213,8 @@ export function createPanel(options) {
     jumpRef.current = jumpTo;
     const markRef = React.useRef(markSelected);
     markRef.current = markSelected;
+    const newRef = React.useRef(newSessionForSelected);
+    newRef.current = newSessionForSelected;
 
     React.useEffect(() => {
       if (typeof host.onKey !== 'function') return undefined;
@@ -187,6 +240,11 @@ export function createPanel(options) {
           markRef.current();
           return;
         }
+        if (event.input === 'n') {
+          event.preventDefault();
+          newRef.current();
+          return;
+        }
         if (event.input === 'r') {
           event.preventDefault();
           tracker.reconcile();
@@ -197,6 +255,7 @@ export function createPanel(options) {
 
     function renderGroup(group) {
       const hovered = hoverId === `g:${group.key}`;
+      const plusHovered = plusHoverKey === group.key;
       const counts = [];
       if (group.running > 0) counts.push(`${spinner}${group.running}`);
       if (group.unread > 0) counts.push(`●${group.unread}`);
@@ -216,6 +275,30 @@ export function createPanel(options) {
           color: hovered ? 'accent' : undefined,
           wrap: 'truncate-end',
         }, `▾ ${group.title || strings.unknownProject}`),
+        // A fresh conversation in this workspace, like `/new` in that cwd.
+        // Kept outside the title Text so its click is its own hit target; the
+        // group header itself has no click action.
+        group.cwd !== ''
+          ? h(
+            Box,
+            {
+              key: `new:${group.key}`,
+              flexShrink: 0,
+              marginLeft: 1,
+              onMouseEnter: () => setPlusHoverKey(group.key),
+              onMouseLeave: () => setPlusHoverKey(current => (current === group.key ? null : current)),
+              onClick: event => {
+                event?.stopImmediatePropagation?.();
+                newSessionIn(group);
+              },
+            },
+            h(Text, {
+              bold: plusHovered,
+              dimColor: !plusHovered,
+              color: plusHovered ? 'accent' : undefined,
+            }, '+'),
+          )
+          : null,
         counts.length > 0
           ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, counts.join(' ')))
           : null,

@@ -16,7 +16,7 @@ const ZH = {
   title: '收件箱',
   commandDescription: '打开收件箱侧栏（正在运行 / 近期会话）',
   shortcutDescription: '打开收件箱侧栏',
-  sceneTitle: '收件箱跳转',
+  sceneTitle: '收件箱操作',
   untitled: '未命名会话',
   unknownProject: '未知项目',
   emptyTitle: '收件箱是空的',
@@ -26,8 +26,8 @@ const ZH = {
     return `最近 ${value} 小时活跃过的会话会显示在这里`;
   },
   liveUnavailable: '当前内核不提供实时会话状态，只显示磁盘上的记录',
-  hintFocused: '↑↓ 选择 · Enter 跳转 · m 已读 · r 刷新',
-  hintIdle: 'Ctrl+B 聚焦 · 点击行跳转',
+  hintFocused: '↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新',
+  hintIdle: 'Ctrl+B 聚焦 · 点击行跳转 · + 新建',
   header(running, unread, total, spinner = '⠋') {
     const parts = [];
     if (running > 0) parts.push(`${spinner} ${running} 运行`);
@@ -36,6 +36,11 @@ const ZH = {
     return total > 0 ? `共 ${total} 个会话` : '暂无会话';
   },
   opening: '正在打开会话…',
+  newOpening: '正在新建会话…',
+  newUnavailable: '无法新建：场景服务不可用',
+  newUnsupported: '当前内核不支持新建会话',
+  newBackgroundFailed: '当前任务无法转入后台，请等它结束',
+  newError: '新建会话失败：{{err}}',
   alreadyHere: '已经在这个会话里了',
   jumpUnavailable: '无法跳转：场景服务不可用',
   openWorking: '当前有任务在跑，暂时不能切换',
@@ -54,7 +59,7 @@ const EN = {
   title: 'Inbox',
   commandDescription: 'Open the inbox panel (running / recent conversations)',
   shortcutDescription: 'Open the inbox panel',
-  sceneTitle: 'Inbox jump',
+  sceneTitle: 'Inbox action',
   untitled: 'Untitled session',
   unknownProject: 'Unknown project',
   emptyTitle: 'The inbox is empty',
@@ -64,8 +69,8 @@ const EN = {
     return `Conversations active in the last ${value}h show up here`;
   },
   liveUnavailable: 'This kernel exposes no live session status; showing persisted records only',
-  hintFocused: '↑↓ select · Enter jump · m read · r refresh',
-  hintIdle: 'Ctrl+B to focus · click a row to jump',
+  hintFocused: '↑↓ select · Enter jump · n new · m read · r refresh',
+  hintIdle: 'Ctrl+B to focus · click a row to jump · + new',
   header(running, unread, total, spinner = '⠋') {
     const parts = [];
     if (running > 0) parts.push(`${spinner} ${running} running`);
@@ -74,6 +79,11 @@ const EN = {
     return total > 0 ? `${total} conversation${total === 1 ? '' : 's'}` : 'nothing here yet';
   },
   opening: 'Opening session…',
+  newOpening: 'Creating a new session…',
+  newUnavailable: 'Cannot create: the scene service is unavailable',
+  newUnsupported: 'This kernel cannot create a session',
+  newBackgroundFailed: 'This turn cannot be backgrounded yet; wait for it to finish',
+  newError: 'New session failed: {{err}}',
   alreadyHere: 'You are already in this session',
   jumpUnavailable: 'Cannot jump: the scene service is unavailable',
   openWorking: 'A turn is in progress; try again shortly',
