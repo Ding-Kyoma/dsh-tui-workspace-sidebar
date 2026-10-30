@@ -811,6 +811,27 @@ test('waiting: the first ask anchors the row and a finished turn clears the flag
   assert.equal(done.waitingAt, 0);
 });
 
+test('waiting: the dot wins over the plan spinner, and an attached waiting row is not unread', () => {
+  const attached = row({
+    id: 'cur',
+    status: 'running',
+    plan: true,
+    finishedAt: 0,
+    seenAt: 0,
+    runningAt: 10,
+    waiting: true,
+    waitingAt: 20,
+    updatedAt: 20,
+  });
+  assert.deepEqual(glyphFor(attached, 4), { char: '●', color: 'success', dim: false });
+  assert.equal(rankOf(attached), RANK_UNREAD);
+
+  const result = buildGroups([attached], [], 'cur', { now: 100 });
+  assert.equal(result.groups[0].rows[0].waiting, true, 'the row on screen shows the dot');
+  assert.equal(result.unread, 0, 'the conversation already on screen is not a badge');
+  assert.equal(result.groups[0].unread, 0);
+});
+
 test('buildGroups: a waiting row is attention even while running', () => {
   const now = 100;
   const rows = [

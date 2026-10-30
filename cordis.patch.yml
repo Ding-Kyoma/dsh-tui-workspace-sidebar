@@ -15,7 +15,7 @@
 #       stateFile: ~/.dsh-tui/workspace-sidebar.json
 #       shortcut: alt+w
 #       retentionHours: 168 # finished rows linger this long (7 days) after last activity; 0 = drop once read
-#       relayQuestions: true # park a background ask and show the green dot; false disables the relay
+#       relayQuestions: true # park a background ask and show the green dot; false only disables parking (the dot for an ask already on screen stays)
 #
 - insert:
     - id: workspace-sidebar

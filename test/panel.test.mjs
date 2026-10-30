@@ -563,6 +563,45 @@ test('panel: a waiting row shows the green dot, stays bold, and says waiting', (
   assert.ok(lines.includes(' 1 运行 · ● 1 未读'), lines.join('\n'));
 });
 
+test('panel: the attached conversation shows the waiting dot while its question is open', () => {
+  // The current session is running a planning turn and asked the person a
+  // question: the row must switch from the plan spinner to the green dot, and
+  // the header must not count the conversation that is already on screen.
+  const currentRow = makeRow({
+    id: 'cur',
+    title: '修复登录页样式',
+    status: 'running',
+    plan: true,
+    finishedAt: 0,
+    seenAt: 0,
+    updatedAt: NOW - 10_000,
+    runningAt: NOW - 20_000,
+    waiting: true,
+    waitingAt: NOW - 5_000,
+  });
+  const harness = createHarness(() => ({
+    groups: [{ key: '/repo/app', cwd: '/repo/app', title: 'dsh-plugins', running: 1, unread: 0, rows: [currentRow] }],
+    running: 1,
+    unread: 0,
+    flatRows: [currentRow],
+    currentId: 'cur',
+    agentsAvailable: true,
+    version: 1,
+  }));
+  const tree = harness.render();
+  const rowBox = findBox(tree, 'cur');
+  const glyph = directTexts(rowBox)[0];
+  assert.equal(textOf(glyph), '●');
+  assert.equal(glyph.props.color, 'success', 'the plan colour loses to the waiting dot');
+  assert.equal(glyph.props.bold, true);
+  const title = textNodes(rowBox).find(node => textOf(node) === '修复登录页样式');
+  assert.equal(title.props.color, 'accent', 'the attached conversation keeps its highlight');
+  const lines = textLines(tree);
+  assert.ok(lines.includes('待回答'), lines.join('\n'));
+  assert.ok(lines.includes(' 1 运行'), lines.join('\n'));
+  assert.ok(!lines.includes('● 1 未读'), 'the conversation on screen is not counted unread');
+});
+
 /** Ids from `ids` that the panel actually rendered, in list order. */
 function renderedIds(tree, ids) {
   return ids.filter(id => findBox(tree, id) !== undefined);

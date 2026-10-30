@@ -33,8 +33,9 @@ function makeService(handler = () => Promise.resolve({ answers: [] })) {
   };
 }
 
-function makeHarness({ probe, current = '', service } = {}) {
+function makeHarness({ probe, current = '', service, parkQuestions } = {}) {
   const listeners = new Map();
+  const listenerOptions = [];
   const subscribers = new Set();
   const waiting = new Map();
   let currentId = current;
@@ -58,7 +59,8 @@ function makeHarness({ probe, current = '', service } = {}) {
     get(name, fallback) {
       return name === 'userQuestions' ? service : fallback;
     },
-    on(name, fn) {
+    on(name, fn, options) {
+      listenerOptions.push({ name, options });
       if (!listeners.has(name)) listeners.set(name, []);
       listeners.get(name).push(fn);
       return () => {
@@ -80,6 +82,7 @@ function makeHarness({ probe, current = '', service } = {}) {
     ctx,
     tracker,
     probe: probe ?? (() => currentId),
+    parkQuestions,
   });
   relay.attach();
 
@@ -87,6 +90,7 @@ function makeHarness({ probe, current = '', service } = {}) {
     relay,
     waiting,
     tracker,
+    listenerOptions,
     listener() {
       const fn = listeners.get('user-questions/request')?.[0];
       assert.equal(typeof fn, 'function', 'the relay registered a waterfall listener');
@@ -102,12 +106,76 @@ function makeHarness({ probe, current = '', service } = {}) {
   };
 }
 
-test('relay: a request another answerer claims is passed through untouched', async () => {
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+test('relay: the listener is prepended so it sees asks the host claims itself', () => {
+  const harness = makeHarness();
+  const registration = harness.listenerOptions.find(entry => entry.name === 'user-questions/request');
+  assert.deepEqual(registration?.options, { prepend: true });
+});
+
+test('relay: a claimed ask marks the row while the question is pending', async () => {
   const harness = makeHarness();
   const answer = { answers: [{ id: 'q1', selected: ['yes'] }] };
-  const result = harness.listener()(makeRequest(), () => Promise.resolve(answer));
+  const pending = deferred();
+  const result = harness.listener()(makeRequest(), () => pending.promise);
+  assert.equal(harness.waiting.get('a'), true, 'the question is on screen now');
+
+  pending.resolve(answer);
   assert.deepEqual(await result, answer);
-  assert.equal(harness.waiting.get('a'), undefined);
+  assert.equal(harness.waiting.get('a'), false, 'the answer settles the row');
+});
+
+test('relay: an ask in the attached session shows the waiting dot too', async () => {
+  const harness = makeHarness({ current: 'a' });
+  const pending = deferred();
+  const result = harness.listener()(makeRequest('a'), () => pending.promise);
+  // dsh-tui claims the attached session's ask; the relay still observes it.
+  assert.equal(harness.waiting.get('a'), true);
+  pending.resolve({ answers: [] });
+  await result;
+  assert.equal(harness.waiting.get('a'), false);
+});
+
+test('relay: concurrent claimed asks keep the row waiting until the last settles', async () => {
+  const harness = makeHarness({ current: 'a' });
+  const first = deferred();
+  const second = deferred();
+  const listener = harness.listener();
+  const one = listener(makeRequest(), () => first.promise);
+  const two = listener(makeRequest(), () => second.promise);
+  assert.equal(harness.waiting.get('a'), true);
+
+  first.resolve({ answers: [] });
+  await one;
+  assert.equal(harness.waiting.get('a'), true, 'the second question is still open');
+
+  second.resolve({ answers: [] });
+  await two;
+  assert.equal(harness.waiting.get('a'), false);
+});
+
+test('relay: a cancelled claimed ask clears the dot and keeps the error identity', async () => {
+  const cancellation = Object.assign(new Error('cancelled'), {
+    name: 'UserQuestionError',
+    code: 'ASK_CANCELLED',
+  });
+  const harness = makeHarness({ current: 'a' });
+  const pending = deferred();
+  const result = harness.listener()(makeRequest(), () => pending.promise);
+  assert.equal(harness.waiting.get('a'), true);
+
+  pending.reject(cancellation);
+  await assert.rejects(result, error => error === cancellation);
+  assert.equal(harness.waiting.get('a'), false);
 });
 
 test('relay: NO_PROVIDER for a background agent parks the ask and marks the row', async () => {
@@ -233,7 +301,7 @@ test('relay: a non-NO_PROVIDER rejection is rethrown unchanged', async () => {
     harness.listener()(makeRequest(), () => Promise.reject(boom)),
     error => error === boom,
   );
-  assert.equal(harness.waiting.size, 0);
+  assert.equal(harness.waiting.get('a'), false, 'the failed ask does not leave the row green');
 });
 
 test('relay: an agentless request is delegated, never parked', async () => {
@@ -267,7 +335,42 @@ test('relay: a foreground NO_PROVIDER is rethrown, not hidden behind a parked ro
     harness.listener()(makeRequest('a'), () => Promise.reject(noProvider())),
     error => error.code === 'NO_PROVIDER',
   );
-  assert.equal(harness.waiting.size, 0);
+  assert.equal(harness.waiting.get('a'), false, 'the observed ask is cleared, nothing is parked');
+});
+
+test('relay: parkQuestions false rethrows a background NO_PROVIDER without parking', async () => {
+  const service = makeService();
+  const harness = makeHarness({ service, parkQuestions: false });
+  await assert.rejects(
+    harness.listener()(makeRequest(), () => Promise.reject(noProvider())),
+    error => error.code === 'NO_PROVIDER',
+  );
+  assert.equal(service.calls.length, 0, 'nothing was re-dispatched');
+  assert.equal(harness.relay.deliver('a'), false, 'nothing is parked');
+  assert.equal(harness.waiting.get('a'), false);
+});
+
+test('relay: parkQuestions false still paints the waiting dot for a claimed ask', async () => {
+  const harness = makeHarness({ current: 'a', parkQuestions: false });
+  const pending = deferred();
+  const result = harness.listener()(makeRequest('a'), () => pending.promise);
+  assert.equal(harness.waiting.get('a'), true);
+  pending.resolve({ answers: [] });
+  await result;
+  assert.equal(harness.waiting.get('a'), false);
+});
+
+test('relay: dispose clears the dot of an observed ask without settling it', async () => {
+  const harness = makeHarness({ current: 'a' });
+  const pending = deferred();
+  void harness.listener()(makeRequest('a'), () => pending.promise);
+  assert.equal(harness.waiting.get('a'), true);
+
+  harness.relay.dispose();
+  assert.equal(harness.waiting.get('a'), false, 'the activation no longer paints a dot');
+  assert.equal(harness.listenerCount(), 0);
+  // The ask belongs to the host answerer: the relay never rejects it on dispose.
+  pending.resolve({ answers: [] });
 });
 
 test('relay: several asks for one agent stay waiting until the last settles', async () => {

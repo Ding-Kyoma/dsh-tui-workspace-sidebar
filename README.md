@@ -38,15 +38,20 @@ process:
 - **Finished but unread** — a turn ended while you were in another session. The
   row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
   first few seconds.
-- **Waiting for your answer** — a background session called
-  `ask_user_question` or `exit_plan_mode`. It uses the same green `●` as an
-  unread finish, stays bold until the question settles, and carries a dim
-  `待回答` (`needs you`) suffix so the two are distinguishable. The running and
-  unread counters both include it. Clicking the row jumps to the session and the
-  host's normal questionnaire / plan-review panel appears; only that explicit
-  click releases the question — it never pops up while you are in another
+- **Waiting for your answer** — a conversation called `ask_user_question` or
+  `exit_plan_mode`. It uses the same green `●` as an unread finish, stays bold
+  until the question settles, and carries a dim `待回答` (`needs you`) suffix so
+  the two are distinguishable. This covers the conversation you are in as well
+  as background ones: a foreground ask is claimed by dsh-tui itself (its
+  questionnaire / plan-review panel is already on screen), and the sidebar still
+  switches the row from the running spinner — plan colour included — to the
+  green dot while that panel is open. The running counter includes a waiting
+  row; the unread counter includes it only when it is not the attached
+  conversation. Clicking a background row jumps to the session and the host's
+  normal questionnaire / plan-review panel appears; only that explicit click
+  releases the parked question — it never pops up while you are in another
   conversation. The original tool call is still waiting for that answer. See
-  [Background questions](#background-questions).
+  [Questions and plan reviews](#questions-and-plan-reviews).
 - **Finished and already read** — jumping to a conversation (or pressing `m`)
   no longer removes it; the dot becomes a dim `✓` and the row stays for the
   rest of the retention window, so the place you just came from is still there.
@@ -135,17 +140,19 @@ replaces the whole `config`, so restate every key you need):
     stateFile: ~/.dsh-tui/workspace-sidebar.json
     shortcut: alt+w                             # off disables it
     retentionHours: 168                         # 7 days; 0 = drop a row as soon as it is read
-    relayQuestions: true                        # false disables the background-question relay
+    relayQuestions: true                        # false disables parking background questions
 ```
 
 `retentionHours` accepts fractions (useful to watch the sweep happen) and is
 capped at 720 (30 days). The default is 168 (7 days). The row cap of 300 stays
 as a hard bound.
 
-`relayQuestions` is on by default. It is the fallback for background
+`relayQuestions` is on by default. It is the parking fallback for background
 `ask_user_question` / `exit_plan_mode` (see below); set it to `false` if the
 host already handles those questions itself, or if you want the old immediate
-`NO_PROVIDER` behavior back.
+`NO_PROVIDER` behavior back. It does **not** disable the waiting dot: the dot
+of a question the host is already showing (including the attached session's
+own questionnaire / plan review) is pure observation and stays on either way.
 
 ## Interaction
 
@@ -213,16 +220,29 @@ disappeared, the handoff failed) the channel's own notice explains why and the
 card closes. A kernel that exposes neither `newSession` nor `switchWorkspace`
 gets "当前内核不支持新建会话".
 
-## Background questions
+## Questions and plan reviews
+
+Every ask — the attached session's own `ask_user_question` / `exit_plan_mode`
+included — is dispatched on the Cordis `user-questions/request` waterfall. The
+plugin listens at the **front** of that chain (`prepend`), because dsh-tui's
+answerer claims the attached session's request and never calls `next()`: a
+listener registered after it would never see the question that is on screen
+right now. The listener still calls `next()` first and only observes the
+returned promise, so the answer value, the rejection identity and the host's
+panel are exactly what they were. While that promise is unsettled the row is
+marked waiting (green `●` + `待回答`); answering, cancelling, a timeout or an
+aborted turn clears it. That is why the conversation you are in shows the green
+dot, rather than its plan-colour spinner, while its questionnaire or plan review
+is open.
 
 dsh-tui 0.17.0's answerer is bound to the session attached to the channel: it
 claims `user-questions/request` only when `request.agent.id` is the current
-channel agent, and calls `next()` for every other agent. A background session
+channel agent, and calls `next()` for every other agent. A **background** session
 that calls `ask_user_question` / `exit_plan_mode` therefore ends the ask at
 `NO_PROVIDER` ("no user-questions answerer accepted the request"), which used to
 surface as a failed tool call and a stalled-looking background turn.
 
-The plugin registers a fallback answerer on the same Cordis waterfall:
+For those the plugin registers a fallback answerer on the same waterfall:
 
 1. it calls `next()` first, so the host (or any other answerer) always gets the
    first chance;
@@ -257,7 +277,8 @@ The relay is deliberately a fallback, not a second question provider:
 - a `NO_PROVIDER` from the re-dispatch (the jump has not landed yet) keeps the
   question parked; the next inbox click tries again. Other unexpected errors
   stay parked and log once; a cancelled/aborted turn settles the parked ask;
-- `relayQuestions: false` disables the whole relay.
+- `relayQuestions: false` disables the parking half only. The waiting dot of a
+  question the host is already showing is observation, not relay, and stays on.
 
 The turn stays blocked while the question is parked, exactly like a foreground
 question waiting for an answer. Open the row from the inbox to release and
@@ -316,9 +337,13 @@ row again.
   green dot is the prompt; the question is not persisted, so a process exit
   discards it. The relay only sees this process's agents.
 - **Waterfall dependency.** The relay uses dsh-tui 0.17.0's
-  `user-questions/request` waterfall and yields to the host first. If a future
-  host stops dispatching that event, the relay simply does nothing (the original
-  `NO_PROVIDER` returns); it never patches dsh-tui.
+  `user-questions/request` waterfall and yields to the host first. It registers
+  with `prepend` so it stays outermost: the host's answerer claims the attached
+  session's ask without delegating, and only an outer listener can observe that
+  question. A future host that prepends its own claiming answerer could hide a
+  foreground ask from the dot; a host that stops dispatching the event leaves
+  the parking fallback inert (the original `NO_PROVIDER` returns). It never
+  patches dsh-tui.
 - **Panel id and the settings picker.** The package ships a `dsh-plugin.json`
   (`id: workspace-sidebar`), so the host admits the activation and the panel
   keeps the durable id `workspace-sidebar:inbox` across runs. Without that
@@ -376,11 +401,15 @@ hover-only row fill, and the
 panel/scene/command/shortcut registration (including feature-detected
 degradation).
 
-The background-question tests cover the `next()`-first pass-through, parking on
-`NO_PROVIDER`, explicit delivery after an inbox jump (and that changing the
-attached session alone never forwards), retrying a forwarded `NO_PROVIDER` on a
-later click, `ASK_CANCELLED` and aborted turns, disposal, unexpected errors,
-agentless requests, the private forward marker, the foreground `NO_PROVIDER`
-guard, multiple parked asks per agent, a double click while a forward is in
-flight, and the green-dot row / header counts / non-persistence of the waiting
-flag.
+The question tests cover the prepended registration, the waiting dot of an ask
+the host claims (the attached session's own questionnaire / plan review), the
+dot beating the plan spinner, concurrent asks keeping the row waiting until the
+last settles, cancellation and error pass-through with the original identity,
+the `next()`-first pass-through, parking on `NO_PROVIDER`, explicit delivery
+after an inbox jump (and that changing the attached session alone never
+forwards), retrying a forwarded `NO_PROVIDER` on a later click, `ASK_CANCELLED`
+and aborted turns, disposal, unexpected errors, agentless requests, the private
+forward marker, the foreground `NO_PROVIDER` guard, multiple parked asks per
+agent, a double click while a forward is in flight, `relayQuestions: false`
+disabling parking but not the dot, and the green-dot row / header counts /
+non-persistence of the waiting flag.

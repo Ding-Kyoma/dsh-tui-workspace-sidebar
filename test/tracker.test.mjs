@@ -499,6 +499,27 @@ test('setWaiting can lead the row and is applied on the next fold', () => {
   assert.ok(row.waitingAt > 0);
 });
 
+test('a waiting attached row shows the dot but raises no badge or header count', () => {
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it'), turnStart(100)] });
+  const { tracker } = makeTracker({ agents: [agent], probe: () => 'a' });
+  tracker.reconcile();
+  assert.equal(tracker.getCurrentId(), 'a');
+
+  const calls = [];
+  tracker.setPanelHandle({ badge: (...args) => calls.push(args) }, 'panel');
+  assert.equal(tracker.setWaiting('a', true), true);
+
+  const snapshot = tracker.getSnapshot();
+  const row = snapshot.flatRows.find(item => item.id === 'a');
+  assert.equal(row.waiting, true, 'the row on screen turns into the green dot');
+  assert.equal(snapshot.unread, 0, 'the conversation already on screen is not a badge');
+  assert.equal(snapshot.groups[0].unread, 0);
+  assert.ok(
+    calls.every(([, badge]) => badge === null),
+    'the tab badge stays clear for the attached session',
+  );
+});
+
 test('the tab badge counts a parked question while the panel is hidden', () => {
   const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
   const { tracker } = makeTracker({ agents: [agent] });

@@ -1,5 +1,6 @@
 /**
- * Background question relay.
+ * Question relay: the waiting dot for every ask, and the answerer of last
+ * resort for the ones nobody claims.
  *
  * dsh-user-questions dispatches every ask on the `user-questions/request`
  * waterfall, scoped to the asking agent. dsh-tui's answerer only claims the
@@ -8,26 +9,36 @@
  * `next()` and the chain ends in `NO_PROVIDER`, which surfaces as a failed
  * `ask_user_question` / `exit_plan_mode` tool call.
  *
- * This module is a *fallback* answerer, deliberately at the end of the chain:
+ * The listener therefore has two jobs, and it is registered at the *front* of
+ * the chain (`prepend`) because the host's answerer claims the attached
+ * session's asks and never calls `next()`: a listener registered after it
+ * would never see the question that is on screen right now.
  *
- * 1. it calls `next()` first, so the host (or any other answerer) always gets
- *    the first chance to handle the ask;
- * 2. it only takes over when the chain rejects with `NO_PROVIDER` and the agent
- *    is not the attached session — a foreground failure is never masked;
- * 3. instead of answering, it parks the request, marks the sidebar row as
- *    waiting (the same green dot as a finished-unread row), and keeps the
- *    original promise pending;
- * 4. the question is re-dispatched only when the person opens that row in the
- *    inbox: the jump scene calls `deliver(agentId)` after the channel adopts the
- *    session. The relay never watches the attached session to decide delivery,
- *    so a background question cannot pop up in the conversation the person is
- *    currently using. The green dot is the only advance notice, and the jump is
- *    the explicit "handle this now" action.
+ * 1. **Observe every accepted ask.** A listener that calls `next()` and gets a
+ *    pending promise back knows some answerer (normally the host) is showing
+ *    the questionnaire / plan review. The row is marked `waiting` for as long
+ *    as that promise is unsettled, so an ask in the conversation you are in
+ *    gets the same green dot as one parked in the background. Nothing is
+ *    intercepted: the answer value and the rejection identity pass through
+ *    unchanged, and cancellation/timeout clear the dot.
+ * 2. **Answer for nobody.** When the chain rejects with `NO_PROVIDER` and the
+ *    agent is not the attached session, the request is parked instead of
+ *    failing: the row is marked waiting and the original tool call is kept
+ *    pending. A foreground `NO_PROVIDER` is rethrown unchanged — it is a host
+ *    bug, and the relay must never mask it.
+ * 3. The parked question is re-dispatched only when the person opens that row
+ *    in the inbox: the jump scene calls `deliver(agentId)` after the channel
+ *    adopts the session. The relay never watches the attached session to
+ *    decide delivery, so a background question cannot pop up in the
+ *    conversation the person is currently using. The green dot is the only
+ *    advance notice, and the jump is the explicit "handle this now" action.
  *
  * The design is intentionally decoupled from the host's fix for the same bug:
  * the relay always yields with `next()` and only acts on `NO_PROVIDER`, so once
  * dsh-tui starts handling background questions itself this module simply never
- * parks anything. `relayQuestions: false` disables it entirely.
+ * parks anything. `parkQuestions: false` disables the parking half (and the
+ * `relayQuestions` config exposes that switch); the observation half stays on,
+ * because it never takes the ask away from the host.
  */
 
 /**
@@ -103,16 +114,26 @@ function agentIdOf(request) {
  *   probe?: () => string | undefined,
  *   logger?: {warn?: (message: string) => void},
  *   service?: any,
+ *   parkQuestions?: boolean,
  * }} [options]
  */
 export function createQuestionRelay(options = {}) {
   const { ctx, tracker, probe, logger } = options;
+  const parkQuestions = options.parkQuestions !== false;
 
   let service = options.service;
   let disposed = false;
   const disposers = [];
   /** @type {Map<string, any[]>} */
   const parked = new Map();
+  /**
+   * Asks some other answerer has accepted and is showing right now, per agent.
+   * The count (not a flag) keeps the row waiting until the last concurrent ask
+   * settles. These requests are *not* parked: the answerer owns them, and the
+   * relay only watches the returned promise to drive the green dot.
+   * @type {Map<string, number>}
+   */
+  const asking = new Map();
 
   /**
    * @param {string} message
@@ -203,18 +224,45 @@ export function createQuestionRelay(options = {}) {
   }
 
   /**
-   * Keep the tracker's attention flag in sync with the queue. The queue is the
-   * source of truth: several asks for one agent keep the row green until the
-   * last one settles.
+   * Keep the tracker's attention flag in sync with both queues: a parked
+   * background ask and a question another answerer is showing right now. The
+   * row stays green until the last of them settles.
    *
    * @param {string} agentId
    */
   function updateWaiting(agentId) {
     try {
-      tracker?.setWaiting?.(agentId, parked.has(agentId));
+      const count = asking.get(agentId) ?? 0;
+      tracker?.setWaiting?.(agentId, parked.has(agentId) || count > 0);
     } catch (error) {
       warn('updating the waiting flag failed', error);
     }
+  }
+
+  /**
+   * Record that some answerer accepted an ask and is showing it now. The count
+   * is per agent so concurrent asks cannot clear the dot early.
+   *
+   * @param {string} agentId
+   */
+  function beginAsking(agentId) {
+    if (disposed || agentId === '') return;
+    asking.set(agentId, (asking.get(agentId) ?? 0) + 1);
+    updateWaiting(agentId);
+  }
+
+  /**
+   * Record that one accepted ask settled, without touching the request itself.
+   * A zero count removes the entry, so a long session does not accumulate ids.
+   *
+   * @param {string} agentId
+   */
+  function endAsking(agentId) {
+    const count = asking.get(agentId) ?? 0;
+    if (count <= 0) return;
+    if (count === 1) asking.delete(agentId);
+    else asking.set(agentId, count - 1);
+    updateWaiting(agentId);
   }
 
   /**
@@ -375,6 +423,13 @@ export function createQuestionRelay(options = {}) {
    * The waterfall listener. It is deliberately written as a plain function so a
    * test can invoke it with a fake `next`.
    *
+   * It is registered with `prepend`, so it is the outermost listener: the host
+   * answerer claims the attached session's ask and never calls `next()`, and a
+   * listener registered after it would never see the question on screen. Being
+   * outermost is also what makes the observation possible without intercepting:
+   * `next()` runs the rest of the chain exactly as before, and the returned
+   * promise is only wrapped to drive the row's waiting flag.
+   *
    * @param {any} request
    * @param {any} next
    * @returns {any}
@@ -387,22 +442,42 @@ export function createQuestionRelay(options = {}) {
     try {
       result = next();
     } catch (error) {
-      if (!isNoProvider(error) || isAttached(agentId)) throw error;
+      if (!isNoProvider(error) || isAttached(agentId) || !parkQuestions) throw error;
       return park(request);
     }
     if (!result || typeof result.then !== 'function') return result;
-    return Promise.resolve(result).catch(error => {
-      if (!isNoProvider(error)) throw error;
-      if (isAttached(agentId)) throw error;
-      return park(request);
-    });
+    // An answerer claimed the ask (normally dsh-tui for the attached session)
+    // and is showing the questionnaire or plan review now. The promise settles
+    // with the person's answer, a cancellation, or a timeout; any of them ends
+    // the waiting state. The value and the error are passed through untouched.
+    beginAsking(agentId);
+    return Promise.resolve(result).then(
+      answer => {
+        endAsking(agentId);
+        return answer;
+      },
+      error => {
+        if (isNoProvider(error) && parkQuestions && !isAttached(agentId)) {
+          // Park first, then drop the observation: the two updates coalesce into
+          // one "still waiting", instead of a false blip between them.
+          const pending = park(request);
+          endAsking(agentId);
+          return pending;
+        }
+        endAsking(agentId);
+        throw error;
+      },
+    );
   }
 
   function attach() {
     if (disposed) return;
     if (typeof ctx?.on === 'function') {
       try {
-        const off = ctx.on('user-questions/request', onRequest);
+        // `prepend`: see onRequest(). The host's answerer for the attached
+        // session returns without delegating, so an outer listener is the only
+        // way to observe a foreground ask.
+        const off = ctx.on('user-questions/request', onRequest, { prepend: true });
         if (typeof off === 'function') disposers.push(off);
       } catch (error) {
         warn('registering the question listener failed', error);
@@ -437,6 +512,11 @@ export function createQuestionRelay(options = {}) {
       ));
     }
     parked.clear();
+    // Observed asks belong to another answerer and are left pending; only the
+    // dot this activation painted is ours to clear.
+    const observed = [...asking.keys()];
+    asking.clear();
+    for (const agentId of observed) updateWaiting(agentId);
     for (const off of disposers.splice(0)) {
       try {
         off();

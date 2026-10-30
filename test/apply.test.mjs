@@ -183,7 +183,7 @@ test('apply tolerates a context without inject (small test hosts)', async () => 
   assert.equal(harness.registered[0].descriptor.title, 'Inbox');
 });
 
-test('apply registers the background question relay by default and can disable it', async () => {
+test('apply registers the question observer either way; relayQuestions only gates parking', async () => {
   const onHarness = await makeHarness();
   apply(onHarness.ctx, { lang: 'zh', stateFile: onHarness.stateFile, shortcut: 'off' });
   await new Promise(resolve => setTimeout(resolve, 20));
@@ -197,7 +197,10 @@ test('apply registers the background question relay by default and can disable i
     relayQuestions: false,
   });
   await new Promise(resolve => setTimeout(resolve, 20));
-  assert.equal(offHarness.listeners.get('user-questions/request')?.length ?? 0, 0);
+  // The waiting dot of an ask that is on screen right now is an observation,
+  // not a relay: disabling the background fallback must not hide it. Only
+  // parking is turned off.
+  assert.equal(offHarness.listeners.get('user-questions/request')?.length, 1);
 });
 
 test('apply degrades when userQuestions is missing', async () => {

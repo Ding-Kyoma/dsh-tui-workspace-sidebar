@@ -66,8 +66,10 @@ export function normalizeConfig(config) {
     ? DEFAULT_RETENTION_HOURS
     : Math.min(hours, MAX_RETENTION_HOURS);
   // On by default: a background ask currently fails with NO_PROVIDER, and the
-  // relay is inert as soon as another answerer claims the request. An explicit
-  // `false` is the escape hatch for a host that handles it natively.
+  // parking half of the relay is inert as soon as another answerer claims the
+  // request. An explicit `false` is the escape hatch for a host that handles
+  // background questions natively; the waiting-dot observation of a foreground
+  // ask never parks anything, so it stays on either way.
   const relayQuestions = source.relayQuestions !== false;
   return { lang, stateFile, shortcut, retentionHours, relayQuestions };
 }
@@ -107,29 +109,32 @@ export function apply(ctx, config = {}) {
     tracker.attach();
     void tracker.load();
 
-    // A background ask has no answerer in dsh-tui 0.17.0: this relay parks it
-    // instead of letting the turn fail, and re-delivers it only when the inbox
-    // jump opens that session. It is feature-detected and yields to the host on
-    // every request, so the official fix makes it inert without a code change.
+    // The relay is always attached. Its observation half paints the waiting dot
+    // for a question some other answerer is showing right now — including the
+    // attached session, whose asks dsh-tui claims itself — and never takes the
+    // ask away from anyone. Its parking half is what `relayQuestions` gates: a
+    // background ask has no answerer in dsh-tui 0.17.0, so that half parks it
+    // instead of letting the turn fail and re-delivers it only when the inbox
+    // jump opens that session. Both halves yield to the host on every request,
+    // so the official fix makes parking inert without a code change.
     let relay;
-    if (settings.relayQuestions) {
+    try {
+      relay = createQuestionRelay({
+        ctx,
+        tracker,
+        probe: () => readAttachedSessionId(),
+        logger,
+        parkQuestions: settings.relayQuestions,
+      });
+      relay.attach();
+    } catch (error) {
       try {
-        relay = createQuestionRelay({
-          ctx,
-          tracker,
-          probe: () => readAttachedSessionId(),
-          logger,
-        });
-        relay.attach();
-      } catch (error) {
-        try {
-          relay?.dispose();
-        } catch {
-          // A partially attached relay is still best-effort.
-        }
-        relay = undefined;
-        warn('registering the background question relay failed', error);
+        relay?.dispose();
+      } catch {
+        // A partially attached relay is still best-effort.
       }
+      relay = undefined;
+      warn('registering the question relay failed', error);
     }
 
     if (typeof ctx?.effect === 'function') {
