@@ -82,6 +82,17 @@ loses the row you are on. The cap is display-only — the state file still retai
 everything the retention window allows, so the next-oldest conversation appears
 when one of the kept rows expires.
 
+The ten-row cap also adapts to the panel height. The panel body is a fixed
+number of lines, and each project heading takes one of them; with many
+workspaces, ten read rows each would overflow it. When that happens the cap is
+lowered for every project together — 9, 8, … — and stops at the first value
+whose grouped list fits, so the panel keeps as much history as the height
+allows. It never goes below **3 read conversations per project**: at that floor
+the list scrolls as before. Folding is display-only and temporary: running,
+waiting, unread and attached rows are never folded, the state file still keeps
+everything, and a taller panel (or a shrinking history) brings the folded rows
+back. The header counts the conversations actually listed.
+
 Everything else is hidden: idle sessions that never ran, subagents, and
 projects with nothing to triage. The attached session is never counted as
 unread (no badge for the conversation already on screen). A waiting row is also
@@ -348,7 +359,9 @@ the padded `+` after the counters), the
 animated row glyphs and project counters (the header total is static), the
 plan-mode spinner colour (row-only; project counters stay muted), the
 per-project cap on read rows (running and
-unread exempt, attached row pinned), the right-pointing project glyph,
+unread exempt, attached row pinned), the height-adaptive folding of read rows
+(cap lowered until the grouped list fits, a floor of three per project, and a
+taller panel revealing the folded rows again), the right-pointing project glyph,
 hover-only row fill, and the
 panel/scene/command/shortcut registration (including feature-detected
 degradation).

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_RETENTION_MS,
   DONE_ROWS_PER_PROJECT,
+  MIN_DONE_ROWS_PER_PROJECT,
   RANK_DONE,
   RANK_RUNNING,
   RANK_UNREAD,
@@ -12,6 +13,7 @@ import {
   basename,
   buildGroups,
   emptyFold,
+  fitGroups,
   foldAgentEvents,
   formatWhen,
   glyphFor,
@@ -48,6 +50,24 @@ function row(overrides = {}) {
     seenAt: 0,
     ...overrides,
   };
+}
+
+/** `projects` workspaces, each with `perProject` read rows; higher index = newer. */
+function manyDoneRows(projects, perProject) {
+  const rows = [];
+  for (let project = 0; project < projects; project += 1) {
+    for (let index = 0; index < perProject; index += 1) {
+      const at = 1_000 + index * 10 + project;
+      rows.push(row({
+        id: `p${project}-done-${index}`,
+        cwd: `/repo/p${project}`,
+        finishedAt: at,
+        updatedAt: at,
+        seenAt: at,
+      }));
+    }
+  }
+  return rows;
 }
 
 test('foldAgentEvents: title, first human prompt, summary, failure, activity time', () => {
@@ -364,6 +384,126 @@ test('buildGroups: the attached read conversation keeps a slot inside the cap', 
   assert.ok(ids.includes('done-0'), 'the attached conversation is never capped away');
   assert.ok(!ids.includes('done-2'), 'the oldest kept row yields its slot');
   assert.equal(selectedRow(result.flatRows, null, 'done-0').id, 'done-0');
+});
+
+test('fitGroups: a list that already fits is returned untouched', () => {
+  const now = 100_000;
+  const built = buildGroups(manyDoneRows(1, 4), [], '', { now });
+  const fitted = fitGroups(built.groups, 10, '');
+  assert.equal(fitted.doneCap, DONE_ROWS_PER_PROJECT);
+  assert.equal(fitted.hidden, 0);
+  assert.equal(fitted.overflow, false);
+  assert.equal(fitted.total, built.flatRows.length + built.groups.length);
+  assert.deepEqual(fitted.flatRows.map(item => item.id), built.flatRows.map(item => item.id));
+});
+
+test('fitGroups: lowers the per-project cap until the grouped list fits', () => {
+  const now = 100_000;
+  const built = buildGroups(manyDoneRows(3, 12), [], '', { now });
+  // 3 headers + 3 * 10 kept read rows = 33 lines before fitting.
+  assert.equal(built.flatRows.length + built.groups.length, 33);
+  const fitted = fitGroups(built.groups, 18, '');
+  // 3 headers + 3 * cap <= 18, so the cap settles at 5 (not lower).
+  assert.equal(fitted.doneCap, 5);
+  assert.equal(fitted.total, 18);
+  assert.equal(fitted.hidden, 15);
+  assert.equal(fitted.overflow, false);
+  for (const group of fitted.groups) {
+    const project = group.key.split('/').pop();
+    assert.equal(group.rows.length, 5);
+    // The newest five survive; the older history is folded away.
+    assert.deepEqual(
+      group.rows.map(item => item.id),
+      [11, 10, 9, 8, 7].map(index => `${project}-done-${index}`),
+    );
+  }
+});
+
+test('fitGroups: many workspaces share the reduced cap', () => {
+  const now = 100_000;
+  const built = buildGroups(manyDoneRows(8, 12), [], '', { now });
+  // 8 headers + 8 * 10 kept read rows = 88 lines before fitting.
+  assert.equal(built.flatRows.length + built.groups.length, 88);
+  const fitted = fitGroups(built.groups, 40, '');
+  // 8 headers + 8 * 4 = 40 lines: the cap settles at four for every workspace.
+  assert.equal(fitted.doneCap, 4);
+  assert.equal(fitted.total, 40);
+  assert.equal(fitted.overflow, false);
+  for (const group of fitted.groups) assert.equal(group.rows.length, 4);
+});
+
+test('fitGroups: never folds below three read rows per project', () => {
+  const now = 100_000;
+  const built = buildGroups(manyDoneRows(2, 12), [], '', { now });
+  const fitted = fitGroups(built.groups, 1, '');
+  assert.equal(fitted.doneCap, MIN_DONE_ROWS_PER_PROJECT);
+  assert.equal(fitted.groups.length, 2);
+  for (const group of fitted.groups) assert.equal(group.rows.length, MIN_DONE_ROWS_PER_PROJECT);
+  assert.equal(fitted.total, 8); // 2 headers + 2 * 3 rows
+  assert.equal(fitted.hidden, 14);
+  assert.equal(fitted.overflow, true, 'the panel falls back to scrolling at the floor');
+});
+
+test('fitGroups: the attached conversation keeps its slot at the compressed cap', () => {
+  const now = 100_000;
+  const built = buildGroups(manyDoneRows(1, 12), [], 'p0-done-0', { now });
+  // The attached row is the oldest one, outside the newest three.
+  const fitted = fitGroups(built.groups, 4, 'p0-done-0');
+  assert.equal(fitted.doneCap, 3);
+  assert.equal(fitted.total, 4);
+  assert.deepEqual(
+    fitted.groups[0].rows.map(item => item.id),
+    ['p0-done-11', 'p0-done-10', 'p0-done-0'],
+    'the attached row displaces the third-newest kept row',
+  );
+  assert.equal(selectedRow(fitted.flatRows, null, 'p0-done-0').id, 'p0-done-0');
+});
+
+test('fitGroups: running, unread and waiting rows are never folded', () => {
+  const now = 100_000;
+  const rows = [
+    row({ id: 'run', status: 'running', runningAt: 5_000, finishedAt: 0, updatedAt: 5_000 }),
+    row({ id: 'unread', finishedAt: 4_000, updatedAt: 4_000, seenAt: 0 }),
+    row({ id: 'wait', status: 'running', waiting: true, waitingAt: 6_000, runningAt: 6_000, finishedAt: 0, updatedAt: 6_000 }),
+  ];
+  for (let index = 0; index < 12; index += 1) {
+    rows.push(row({ id: `done-${index}`, finishedAt: 1_000 + index, updatedAt: 1_000 + index, seenAt: 1_000 + index }));
+  }
+  const built = buildGroups(rows, [], '', { now });
+  const fitted = fitGroups(built.groups, 1, '');
+  const ids = fitted.flatRows.map(item => item.id);
+  for (const id of ['run', 'unread', 'wait']) {
+    assert.ok(ids.includes(id), `${id} survives compression`);
+  }
+  assert.equal(fitted.doneCap, MIN_DONE_ROWS_PER_PROJECT);
+  assert.equal(fitted.flatRows.length, 6); // 3 attention rows + 3 read rows
+});
+
+test('fitGroups: attention-only overflow does not fold anything', () => {
+  const now = 100_000;
+  const rows = [];
+  for (let index = 0; index < 8; index += 1) {
+    rows.push(row({ id: `unread-${index}`, finishedAt: 1_000 + index, updatedAt: 1_000 + index, seenAt: 0 }));
+  }
+  const built = buildGroups(rows, [], '', { now });
+  const fitted = fitGroups(built.groups, 3, '');
+  assert.equal(fitted.doneCap, DONE_ROWS_PER_PROJECT, 'there is no read history to fold');
+  assert.equal(fitted.hidden, 0);
+  assert.equal(fitted.overflow, true);
+  assert.equal(fitted.flatRows.length, 8);
+});
+
+test('fitGroups: an unknown capacity leaves the grouped list alone', () => {
+  const now = 100_000;
+  const built = buildGroups(manyDoneRows(2, 12), [], '', { now });
+  for (const capacity of [undefined, 0, Number.NaN, -5]) {
+    const fitted = fitGroups(built.groups, capacity, '');
+    assert.equal(fitted.doneCap, DONE_ROWS_PER_PROJECT);
+    assert.equal(fitted.hidden, 0);
+    assert.equal(fitted.overflow, false);
+    assert.deepEqual(fitted.flatRows.map(item => item.id), built.flatRows.map(item => item.id));
+  }
+  assert.deepEqual(fitGroups(undefined, 10, '').groups, []);
 });
 
 test('buildGroups: projects follow the same class priority', () => {

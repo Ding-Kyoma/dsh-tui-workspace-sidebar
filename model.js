@@ -283,8 +283,21 @@ export const RANK_DONE = 2;
  * trimmed, and the tracker keeps every row the retention window allows. It
  * bounds how far back a busy project's history reaches without shortening the
  * window itself.
+ *
+ * It is the *maximum*: when the panel is too short for the whole grouped list,
+ * {@link fitGroups} lowers it for every project until the list fits, never
+ * below {@link MIN_DONE_ROWS_PER_PROJECT}.
  */
 export const DONE_ROWS_PER_PROJECT = 10;
+
+/**
+ * The floor for the adaptive cap applied by {@link fitGroups}.
+ *
+ * A project always keeps this many already-read conversations, even when the
+ * panel is shorter than the resulting list: below this point the panel scrolls
+ * as it always did instead of folding away any more history.
+ */
+export const MIN_DONE_ROWS_PER_PROJECT = 3;
 
 /**
  * The triage class of a row. A failed finish is still a finish: it belongs in
@@ -613,17 +626,22 @@ function compareByTriage(left, right) {
  * slot: when it is a done row outside the cap, it displaces the oldest kept row
  * so the list never exceeds the cap and the panel always has a row to land on.
  *
+ * `cap` defaults to {@link DONE_ROWS_PER_PROJECT}; {@link fitGroups} re-applies
+ * this helper with a smaller cap when the panel is too short.
+ *
  * @param {readonly SidebarRow[]} rows
  * @param {string} currentId
+ * @param {number} [cap]
  * @returns {SidebarRow[]}
  */
-function capDoneRows(rows, currentId) {
+function capDoneRows(rows, currentId, cap = DONE_ROWS_PER_PROJECT) {
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : DONE_ROWS_PER_PROJECT;
   const done = rows.filter(row => rankOf(row) === RANK_DONE);
-  if (done.length <= DONE_ROWS_PER_PROJECT) return rows;
-  const kept = new Set(done.slice(0, DONE_ROWS_PER_PROJECT));
+  if (done.length <= limit) return rows;
+  const kept = new Set(done.slice(0, limit));
   const current = done.find(row => String(row.id) === currentId);
   if (current !== undefined && !kept.has(current)) {
-    kept.delete(done[DONE_ROWS_PER_PROJECT - 1]);
+    kept.delete(done[limit - 1]);
     kept.add(current);
   }
   return rows.filter(row => rankOf(row) !== RANK_DONE || kept.has(row));
@@ -734,6 +752,99 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     running,
     unread,
     flatRows,
+  };
+}
+
+/**
+ * Fold already-read conversations until the grouped list fits the panel.
+ *
+ * The panel body has a fixed number of lines, and every project header is one
+ * of them. With enough workspaces the fixed {@link DONE_ROWS_PER_PROJECT} cap
+ * alone can overflow that budget, forcing a scroll for rows that are only
+ * history. This function lowers the cap for *every* project together —
+ * 9, 8, … — and stops at the first cap whose grouped list fits, so the panel
+ * keeps as much history as the height allows. It never goes below
+ * {@link MIN_DONE_ROWS_PER_PROJECT}; at that floor the list is returned as
+ * trimmed and `overflow` is true, letting the panel scroll as before.
+ *
+ * Only the done class is affected. Running, waiting and unread rows are never
+ * folded, and {@link capDoneRows} still pins the attached conversation, so the
+ * row the person is looking at cannot disappear. The result is display-only:
+ * the tracker keeps every row the retention window allows, and a taller panel
+ * (or a shorter list) reveals the folded conversations again.
+ *
+ * A non-positive or non-finite `capacity` means "no viewport information"
+ * (tests, non-TUI callers); the list is returned untouched.
+ *
+ * `groups` must come from {@link buildGroups}: each project's rows are already
+ * triage-sorted, with the done class newest-first, which is what makes the
+ * "keep the first N read rows" rule mean "keep the newest N".
+ *
+ * @param {readonly {
+ *   key: string,
+ *   title: string,
+ *   cwd: string,
+ *   running: number,
+ *   unread: number,
+ *   rows: SidebarRow[],
+ * }[]} groups
+ * @param {number} capacity lines available to the grouped list (headers included)
+ * @param {string} currentId
+ * @returns {{
+ *   groups: any[],
+ *   flatRows: SidebarRow[],
+ *   doneCap: number,
+ *   hidden: number,
+ *   total: number,
+ *   overflow: boolean,
+ * }}
+ */
+export function fitGroups(groups, capacity, currentId) {
+  const source = Array.isArray(groups) ? groups : [];
+  const current = String(currentId ?? '');
+  const base = source.map(group => ({
+    ...group,
+    rows: Array.isArray(group.rows) ? group.rows : [],
+  }));
+  const countOf = list => list.reduce((total, group) => total + 1 + group.rows.length, 0);
+  const baseTotal = countOf(base);
+  const budget = Number.isFinite(capacity) ? Math.floor(capacity) : 0;
+
+  if (budget <= 0 || baseTotal <= budget) {
+    return {
+      groups: base,
+      flatRows: base.flatMap(group => group.rows),
+      doneCap: DONE_ROWS_PER_PROJECT,
+      hidden: 0,
+      total: baseTotal,
+      overflow: false,
+    };
+  }
+
+  let best = base;
+  let bestTotal = baseTotal;
+  let bestCap = DONE_ROWS_PER_PROJECT;
+  for (let cap = DONE_ROWS_PER_PROJECT - 1; cap >= MIN_DONE_ROWS_PER_PROJECT; cap -= 1) {
+    const candidate = base.map(group => ({
+      ...group,
+      rows: capDoneRows(group.rows, current, cap),
+    }));
+    const candidateTotal = countOf(candidate);
+    // No project has more than `cap` read rows, so a smaller cap cannot help.
+    if (candidateTotal === bestTotal) break;
+    best = candidate;
+    bestTotal = candidateTotal;
+    bestCap = cap;
+    if (bestTotal <= budget) break;
+  }
+
+  return {
+    groups: best,
+    flatRows: best.flatMap(group => group.rows),
+    doneCap: bestCap,
+    hidden: baseTotal - bestTotal,
+    total: bestTotal,
+    overflow: bestTotal > budget,
   };
 }
 

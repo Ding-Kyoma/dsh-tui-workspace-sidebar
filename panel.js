@@ -19,6 +19,7 @@ import {
   RUNNING_FRAME_MS,
   RUNNING_FRAMES,
   basename,
+  fitGroups,
   formatWhen,
   glyphFor,
   normalizeCwd,
@@ -58,7 +59,17 @@ export function createPanel(options) {
     const [plusHoverKey, setPlusHoverKey] = React.useState(null);
     const [top, setTop] = React.useState(0);
 
-    const rows = data.flatRows;
+    const showHeader = height >= 3;
+    const showFooter = height >= 4;
+    const capacity = Math.max(1, height - (showHeader ? 1 : 0) - (showFooter ? 1 : 0));
+
+    // The body is a fixed number of lines: when the grouped list would not fit,
+    // fold older read conversations until it does (never below three per
+    // project). Everything below — selection, keyboard movement, the header
+    // total — sees the same fitted view, so the highlight can never sit on a
+    // folded row. Running, unread and waiting rows are never folded.
+    const view = fitGroups(data.groups, capacity, data.currentId);
+    const rows = view.flatRows;
     // Default to the conversation on screen: the panel opens with the highlight
     // where the person actually is, not on the first row of the list.
     const selected = selectedRow(rows, selectedId, data.currentId);
@@ -66,6 +77,8 @@ export function createPanel(options) {
     selectedRef.current = selected?.id;
     const dataRef = React.useRef(data);
     dataRef.current = data;
+    const viewRef = React.useRef(view);
+    viewRef.current = view;
     const lastCurrent = React.useRef(data.currentId);
 
     const running = data.running > 0;
@@ -77,9 +90,6 @@ export function createPanel(options) {
     const spinner = spinnerGlyph(frame);
     const now = Date.now();
     const showTime = width >= 30;
-    const showHeader = height >= 3;
-    const showFooter = height >= 4;
-    const capacity = Math.max(1, height - (showHeader ? 1 : 0) - (showFooter ? 1 : 0));
 
     // Keep the tracker's notion of "the session on screen" and "the panel is
     // visible" up to date. The panel unmounts when another tab is active, so
@@ -120,7 +130,7 @@ export function createPanel(options) {
 
     /** @type {{type: 'header' | 'row', key: string, group?: any, row?: any}[]} */
     const items = [];
-    for (const group of data.groups) {
+    for (const group of view.groups) {
       items.push({ type: 'header', key: `g:${group.key}`, group });
       for (const row of group.rows) items.push({ type: 'row', key: row.id, row, group });
     }
@@ -136,7 +146,7 @@ export function createPanel(options) {
     }, [focusIndex, safeTop, capacity, items.length]);
 
     function move(delta) {
-      const list = dataRef.current.flatRows;
+      const list = viewRef.current.flatRows;
       if (list.length === 0) return;
       const index = list.findIndex(row => row.id === selectedRef.current);
       const base = index < 0 ? (delta > 0 ? -1 : 0) : index;
@@ -146,7 +156,7 @@ export function createPanel(options) {
     }
 
     function jumpTo(row) {
-      const target = row ?? dataRef.current.flatRows.find(item => item.id === selectedRef.current);
+      const target = row ?? viewRef.current.flatRows.find(item => item.id === selectedRef.current);
       if (!target) return;
       if (target.id === dataRef.current.currentId) {
         host.toast(strings.alreadyHere);
@@ -188,15 +198,15 @@ export function createPanel(options) {
     }
 
     function newSessionForSelected() {
-      const row = dataRef.current.flatRows.find(item => item.id === selectedRef.current);
+      const row = viewRef.current.flatRows.find(item => item.id === selectedRef.current);
       if (!row || typeof row.cwd !== 'string' || row.cwd === '') return;
       const key = normalizeCwd(row.cwd);
-      const group = dataRef.current.groups.find(item => item.key === key);
+      const group = viewRef.current.groups.find(item => item.key === key);
       requestNew(row.cwd, group?.title || basename(row.cwd));
     }
 
     function markSelected() {
-      const row = dataRef.current.flatRows.find(item => item.id === selectedRef.current);
+      const row = viewRef.current.flatRows.find(item => item.id === selectedRef.current);
       if (!row) return;
       if (row.status === 'running') {
         host.toast(strings.cannotMarkRunning);
@@ -393,7 +403,7 @@ export function createPanel(options) {
       Box,
       { flexDirection: 'column', flexGrow: 1, width: '100%', overflow: 'hidden' },
       showHeader
-        ? h(Box, { height: 1, flexShrink: 0, paddingX: 1, overflow: 'hidden' }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length)))
+        ? h(Box, { height: 1, flexShrink: 0, paddingX: 1, overflow: 'hidden' }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, view.flatRows.length)))
         : null,
       body,
       showFooter

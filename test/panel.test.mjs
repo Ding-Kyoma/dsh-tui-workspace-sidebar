@@ -37,6 +37,47 @@ function snapshot() {
 }
 
 /**
+ * `projects` workspaces with ten already-read conversations each — the shape
+ * the tracker hands to the panel once its per-project cap has been applied.
+ * Rows are newest-first inside a group, as buildGroups sorts them.
+ */
+function manyDoneSnapshot({ projects = 2, current = 'p0-done-9' } = {}) {
+  const groups = [];
+  for (let project = 0; project < projects; project += 1) {
+    const rows = [];
+    for (let index = 0; index < 10; index += 1) {
+      const at = NOW - 60_000 - (10 - index) * 60_000;
+      rows.push(makeRow({
+        id: `p${project}-done-${index}`,
+        cwd: `/repo/p${project}`,
+        title: `项目${project} 会话${index}`,
+        updatedAt: at,
+        finishedAt: at,
+        seenAt: at,
+      }));
+    }
+    rows.reverse();
+    groups.push({
+      key: `/repo/p${project}`,
+      cwd: `/repo/p${project}`,
+      title: `项目${project}`,
+      running: 0,
+      unread: 0,
+      rows,
+    });
+  }
+  return {
+    groups,
+    running: 0,
+    unread: 0,
+    flatRows: groups.flatMap(group => group.rows),
+    currentId: current,
+    agentsAvailable: true,
+    version: 1,
+  };
+}
+
+/**
  * A tiny fake React: enough state/refs to drive the panel without a renderer,
  * so the animation and highlight decisions stay unit-testable.
  */
@@ -124,7 +165,7 @@ function createHarness(getSnapshot = snapshot, options = {}) {
   function render() {
     cursor = 0;
     depth += 1;
-    const tree = component({ React, ui, host, width: 40, height: 10, focused: options.focused ?? true, visible: true });
+    const tree = component({ React, ui, host, width: 40, height: options.height ?? 10, focused: options.focused ?? true, visible: true });
     depth -= 1;
     if (depth === 0) {
       // Mount effects once the tree is built, like React does after a commit.
@@ -459,4 +500,58 @@ test('panel: a waiting row shows the green dot, stays bold, and says waiting', (
   const lines = textLines(tree);
   assert.ok(lines.includes('待回答'), lines.join('\n'));
   assert.ok(lines.includes(' 1 运行 · ● 1 未读'), lines.join('\n'));
+});
+
+/** Ids from `ids` that the panel actually rendered, in list order. */
+function renderedIds(tree, ids) {
+  return ids.filter(id => findBox(tree, id) !== undefined);
+}
+
+test('panel: a short panel folds read conversations until the list fits', () => {
+  const fixture = manyDoneSnapshot();
+  const allIds = fixture.flatRows.map(item => item.id);
+  // height 14 leaves 12 body lines. Two project headers take two of them, so
+  // each project keeps five of its ten read rows: 2 + 5 + 5 = 12.
+  const tree = createHarness(() => fixture, { height: 14 }).render();
+  assert.deepEqual(renderedIds(tree, allIds), [
+    'p0-done-9', 'p0-done-8', 'p0-done-7', 'p0-done-6', 'p0-done-5',
+    'p1-done-9', 'p1-done-8', 'p1-done-7', 'p1-done-6', 'p1-done-5',
+  ]);
+  assert.ok(findBox(tree, 'g:/repo/p0'), 'the first project header stays');
+  assert.ok(findBox(tree, 'g:/repo/p1'), 'the second project header stays');
+  // The header counts conversations, not the two project header lines.
+  assert.ok(textLines(tree).includes('共 10 个会话'), textLines(tree).join('\n'));
+});
+
+test('panel: a taller panel reveals the folded conversations again', () => {
+  const fixture = manyDoneSnapshot();
+  const allIds = fixture.flatRows.map(item => item.id);
+  const tree = createHarness(() => fixture, { height: 30 }).render();
+  assert.equal(renderedIds(tree, allIds).length, 20, 'nothing is folded when it fits');
+  assert.ok(textLines(tree).includes('共 20 个会话'), textLines(tree).join('\n'));
+});
+
+test('panel: folding never hides the attached conversation', () => {
+  const fixture = manyDoneSnapshot({ current: 'p0-done-0' });
+  const tree = createHarness(() => fixture, { height: 14 }).render();
+  assert.ok(findBox(tree, 'p0-done-0'), 'the attached oldest row keeps its slot');
+  assert.ok(findBox(tree, 'p0-done-9'), 'the newest rows stay');
+  assert.equal(findBox(tree, 'p0-done-5'), undefined, 'the fifth-newest row yields its slot');
+});
+
+test('panel: keyboard movement stays inside the folded view', () => {
+  const fixture = manyDoneSnapshot();
+  const harness = createHarness(() => fixture, { height: 14 });
+  harness.render();
+  // 51 steps from the attached row: 51 % 10 = 1, so the selection lands on a
+  // visible row instead of the attached one (which would only toast).
+  for (let index = 0; index < 51; index += 1) harness.press('', { downArrow: true });
+  harness.press('', { return: true });
+  assert.equal(harness.requests.length, 1);
+  const target = harness.requests[0].id;
+  const tree = harness.render();
+  assert.ok(findBox(tree, target), `the selected row ${target} is rendered`);
+  for (const hidden of ['p0-done-4', 'p0-done-0', 'p1-done-4', 'p1-done-0']) {
+    assert.notEqual(target, hidden, 'a folded row can never be selected');
+  }
 });
