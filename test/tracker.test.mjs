@@ -450,3 +450,56 @@ test('the per-project display cap never prunes persisted read rows', async () =>
   // The cap is display-only: the state file still keeps every retained row.
   assert.equal(Object.keys(store.snapshot().sessions).length, DONE_ROWS_PER_PROJECT + 2);
 });
+
+test('setWaiting marks a running row and counts it as attention', () => {
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it'), turnStart(100)] });
+  const { tracker } = makeTracker({ agents: [agent] });
+  assert.equal(tracker.getCurrentId(), '');
+  assert.equal(tracker.setWaiting('a', true), true);
+  const row = tracker.getSnapshot().flatRows.find(item => item.id === 'a');
+  assert.equal(row.waiting, true);
+  assert.equal(row.waitingAt, 1_000);
+  assert.equal(tracker.getSnapshot().unread, 1);
+  assert.equal(tracker.setWaiting('a', false), true);
+  assert.equal(tracker.getSnapshot().flatRows.find(item => item.id === 'a').waiting, false);
+  assert.equal(tracker.getSnapshot().unread, 0);
+});
+
+test('setWaiting can lead the row and is applied on the next fold', () => {
+  const agents = [];
+  const { tracker, harness } = makeTracker({ agents });
+  assert.equal(tracker.setWaiting('late', true), true);
+  agents.push(makeAgent({ id: 'late', status: 'running', events: [promptEvent('later')] }));
+  harness.emit('agent/created', { agent: agents[0] });
+  const row = tracker.getSnapshot().flatRows.find(item => item.id === 'late');
+  assert.equal(row.waiting, true);
+  assert.ok(row.waitingAt > 0);
+});
+
+test('the tab badge counts a parked question while the panel is hidden', () => {
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker } = makeTracker({ agents: [agent] });
+  const calls = [];
+  tracker.setPanelHandle({ badge: (...args) => calls.push(args) }, 'panel');
+  tracker.setWaiting('a', true);
+  assert.deepEqual(calls.at(-1), ['panel', { level: 'info', unread: 1 }]);
+});
+
+test('a disposed agent clears its parked-question flag', () => {
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent] });
+  tracker.setWaiting('a', true);
+  harness.emit('agent/disposed', { agent });
+  const row = tracker.getSnapshot().flatRows.find(item => item.id === 'a');
+  assert.equal(row.waiting, false);
+});
+
+test('getCurrentId follows the probe-driven reconcile', () => {
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  let attached = '';
+  const { tracker } = makeTracker({ agents: [agent], probe: () => attached });
+  assert.equal(tracker.getCurrentId(), '');
+  attached = 'a';
+  tracker.reconcile();
+  assert.equal(tracker.getCurrentId(), 'a');
+});

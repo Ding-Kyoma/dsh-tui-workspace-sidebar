@@ -8,8 +8,9 @@ project, one line per conversation, hover to highlight, click to jump. A `+`
 after a project's counters starts a fresh conversation in that workspace.
 
 ```
-⠋ 1 运行 · ● 1 未读
-▸ dsh-plugins ⠋1 ●1 +
+⠋ 2 运行 · ● 2 未读
+▸ dsh-plugins ⠋2 ●2 +
+  ● 后台计划                  待回答
   ● 重写 README               5 分钟前
   ⠋ 给补丁跑个验证            2 分钟前
 ❯ ✓ 修复登录页样式            刚刚
@@ -20,7 +21,7 @@ after a project's counters starts a fresh conversation in that workspace.
 
 ## What it shows
 
-Three kinds of conversations, across every workspace that is live in this TUI
+Four kinds of conversations, across every workspace that is live in this TUI
 process:
 
 - **Running** — the session's agent is inside a turn. The braille spinner is
@@ -34,6 +35,14 @@ process:
 - **Finished but unread** — a turn ended while you were in another session. The
   row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
   first few seconds.
+- **Waiting for your answer** — a background session called
+  `ask_user_question` or `exit_plan_mode`. It uses the same green `●` as an
+  unread finish, stays bold until the question settles, and carries a dim
+  `待回答` (`needs you`) suffix so the two are distinguishable. The running and
+  unread counters both include it. Clicking the row jumps to the session and the
+  host's normal questionnaire / plan-review panel appears; the original tool
+  call is still waiting for that answer. See
+  [Background questions](#background-questions).
 - **Finished and already read** — jumping to a conversation (or pressing `m`)
   no longer removes it; the dot becomes a dim `✓` and the row stays for the
   rest of the retention window, so the place you just came from is still there.
@@ -47,33 +56,36 @@ never filled; only the row under the mouse gets the highlight background. It is
 pinned regardless of age while you are in it.
 
 Inside a project, rows are grouped by what wants attention first: **finished but
-unread** conversations lead, then **running** ones, then everything already dealt
-with (read finishes, which includes the attached conversation once its turn is
-over). Within a class rows are ordered by when their **current state began**, not
-by their latest event: a running row is anchored to the start of its current
-turn, a finished row to the moment it finished. Activity inside a turn — tokens,
-tool calls, step markers, background job events — never reorders the list, so two
-conversations running at the same time keep a fixed relative order instead of
-trading places on every event. A new turn lifts its row once, and an exact tie
-falls back to the session id. Projects follow the same class priority, so the
-first rows of the panel are always the ones that want attention. Inside a class
-projects also keep a fixed order — the slot where the project first appeared in
-this run, never an activity timestamp — so a new turn in one workspace cannot
-make two running workspaces trade places; only a change of class (a turn
-finishing unread, or an unread row being read) moves a project. The relative
-time on the right still reports the last activity (it is also what the retention
-window uses).
+unread** conversations and **parked questions** lead, then **running** ones, then
+everything already dealt with (read finishes, which includes the attached
+conversation once its turn is over). Within a class rows are ordered by when their
+**current state began**, not by their latest event: a running row is anchored to
+the start of its current turn, a finished row to the moment it finished, and a
+waiting row to the moment the question was parked. Activity inside a turn —
+tokens, tool calls, step markers, background job events — never reorders the
+list, so two conversations running at the same time keep a fixed relative order
+instead of trading places on every event. A new turn lifts its row once, and an
+exact tie falls back to the session id. Projects follow the same class priority,
+so the first rows of the panel are always the ones that want attention. Inside a
+class projects also keep a fixed order — the slot where the project first
+appeared in this run, never an activity timestamp — so a new turn in one
+workspace cannot make two running workspaces trade places; only a change of
+class (a turn finishing unread, a question being parked, or an unread row being
+read) moves a project. The relative time on the right still reports the last
+activity (it is also what the retention window uses).
 
-Each project lists at most **10 already-read** conversations. Running and unread
-rows are never capped, and the attached conversation always keeps a slot: when it
-is an older read row it displaces the tenth, so the panel never loses the row you
-are on. The cap is display-only — the state file still retains everything the
-retention window allows, so the next-oldest conversation appears when one of the
-kept rows expires.
+Each project lists at most **10 already-read** conversations. Running, waiting
+and unread rows are never capped, and the attached conversation always keeps a
+slot: when it is an older read row it displaces the tenth, so the panel never
+loses the row you are on. The cap is display-only — the state file still retains
+everything the retention window allows, so the next-oldest conversation appears
+when one of the kept rows expires.
 
 Everything else is hidden: idle sessions that never ran, subagents, and
 projects with nothing to triage. The attached session is never counted as
-unread (no badge for the conversation already on screen).
+unread (no badge for the conversation already on screen). A waiting row is also
+never swept by the retention window — the question is still waiting for an
+answer, so its green dot stays until the tool call settles.
 
 ## Install
 
@@ -102,10 +114,16 @@ replaces the whole `config`, so restate every key you need):
     stateFile: ~/.dsh-tui/workspace-sidebar.json
     shortcut: alt+w                             # off disables it
     retentionHours: 6                           # 0 = drop a row as soon as it is read
+    relayQuestions: true                        # false disables the background-question relay
 ```
 
 `retentionHours` accepts fractions (useful to watch the sweep happen) and is
 capped at 720 (30 days). The row cap of 300 stays as a hard bound.
+
+`relayQuestions` is on by default. It is the fallback for background
+`ask_user_question` / `exit_plan_mode` (see below); set it to `false` if the
+host already handles those questions itself, or if you want the old immediate
+`NO_PROVIDER` behavior back.
 
 ## Interaction
 
@@ -173,6 +191,49 @@ disappeared, the handoff failed) the channel's own notice explains why and the
 card closes. A kernel that exposes neither `newSession` nor `switchWorkspace`
 gets "当前内核不支持新建会话".
 
+## Background questions
+
+dsh-tui 0.17.0's answerer is bound to the session attached to the channel: it
+claims `user-questions/request` only when `request.agent.id` is the current
+channel agent, and calls `next()` for every other agent. A background session
+that calls `ask_user_question` / `exit_plan_mode` therefore ends the ask at
+`NO_PROVIDER` ("no user-questions answerer accepted the request"), which used to
+surface as a failed tool call and a stalled-looking background turn.
+
+The plugin registers a fallback answerer on the same Cordis waterfall:
+
+1. it calls `next()` first, so the host (or any other answerer) always gets the
+   first chance;
+2. it only takes over when the chain rejects with `NO_PROVIDER` **and** the
+   asking agent is not the attached session — a foreground failure is never
+   masked;
+3. it parks the request, marks the row waiting (green `●` + `待回答`), and keeps
+   the original tool call pending instead of failing it;
+4. when the row is clicked and the TUI attaches to that session, the relay
+   re-dispatches the same request through `userQuestions.ask()`. The host's
+   answerer now claims it, the normal questionnaire / plan-review panel appears,
+   and the answer resolves the parked tool call. A cancellation
+   (`ASK_CANCELLED`) propagates normally, so cancelling a plan review keeps you
+   in plan mode instead of producing a `NO_PROVIDER` error.
+
+The relay is deliberately a fallback, not a second question provider:
+
+- it yields to every other answerer on every request, so once dsh-tui handles
+  background questions itself it simply never parks anything;
+- the `FORWARD` marker is a private Symbol, so the plugin's own listener cannot
+  park its re-dispatch a second time;
+- a `NO_PROVIDER` from the re-dispatch (the jump has not landed yet) keeps the
+  question parked and retries; other unexpected errors stay parked, log once,
+  and retry with backoff; a cancelled/aborted turn settles the parked ask;
+- `relayQuestions: false` disables the whole relay.
+
+The turn stays blocked while the question is parked, exactly like a foreground
+question waiting for an answer. Jump to the row (or answer from the session
+screen) to resolve it, or cancel the turn. A timed `ask_user_question` still
+times out to `{ pending: true }`; the row's green dot then clears without an
+answer. The question is in-memory only: if the process exits while it is
+parked, the question is gone with the tool call.
+
 ## Persistence
 
 State lives in `~/.dsh-tui/workspace-sidebar.json` (mode `0600`, atomic
@@ -201,8 +262,10 @@ Finished rows survive restarts with their titles and read state — read ones
 included, until their retention window closes. Rows past `retentionHours` (or
 beyond the 300-row cap) are pruned, and a hidden panel still sweeps them on
 time through one unref'd timer, so the tab badge shrinks without being opened.
-A corrupt file is preserved as `workspace-sidebar.json.corrupt-<epoch>` before
-an empty state is used.
+The `waiting` / `waitingAt` flags are in-memory only: the store's field
+whitelist drops them, so a restart never shows a green dot for a question whose
+tool call is gone. A corrupt file is preserved as
+`workspace-sidebar.json.corrupt-<epoch>` before an empty state is used.
 
 ## Limitations
 
@@ -210,6 +273,14 @@ an empty state is used.
   (`ctx.agents`) and the live session event logs of this TUI process. dsh-tui
   0.17.0 exposes no cross-process roster, so conversations that only exist on
   disk are invisible until resumed.
+- **Parked questions wait for a jump.** A background question keeps its turn
+  blocked until you jump to the row and answer it (or cancel the turn). The
+  green dot is the prompt; the question is not persisted, so a process exit
+  discards it. The relay only sees this process's agents.
+- **Waterfall dependency.** The relay uses dsh-tui 0.17.0's
+  `user-questions/request` waterfall and yields to the host first. If a future
+  host stops dispatching that event, the relay simply does nothing (the original
+  `NO_PROVIDER` returns); it never patches dsh-tui.
 - **Temporary panel id.** The plugin ships without a `dsh-plugin.json`
   manifest, so the host assigns a per-activation id
   (`session:actN:inbox`). That id cannot be persisted; it is re-resolved from
@@ -237,7 +308,7 @@ an empty state is used.
 ## Tests
 
 ```sh
-npm test        # node --test: model, tracker, store, discovery, jump, apply, strings, panel
+npm test        # node --test: model, tracker, store, current, jump, apply, strings, panel, questions
 ```
 
 The tests cover the transition table (`running → finished → seen`), the
@@ -257,3 +328,10 @@ unread exempt, attached row pinned), the right-pointing project glyph,
 hover-only row fill, and the
 panel/scene/command/shortcut registration (including feature-detected
 degradation).
+
+The background-question tests cover the `next()`-first pass-through, parking on
+`NO_PROVIDER`, the tracker-subscription re-delivery after a jump, retrying a
+forwarded `NO_PROVIDER`, `ASK_CANCELLED` and aborted turns, disposal, unexpected
+errors, agentless requests, the private forward marker, the foreground
+`NO_PROVIDER` guard, multiple parked asks per agent, and the green-dot row /
+header counts / non-persistence of the waiting flag.

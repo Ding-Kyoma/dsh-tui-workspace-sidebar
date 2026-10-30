@@ -15,6 +15,7 @@ async function makeHarness({ withPanels = true } = {}) {
   const scenes = [];
   const commands = [];
   const shortcuts = [];
+  const listeners = new Map();
   const services = {
     tuiPanels: withPanels
       ? {
@@ -77,8 +78,14 @@ async function makeHarness({ withPanels = true } = {}) {
     get(name, fallback) {
       return services[name] ?? fallback;
     },
-    on() {
-      return () => {};
+    on(name, fn) {
+      if (!listeners.has(name)) listeners.set(name, []);
+      listeners.get(name).push(fn);
+      return () => {
+        const list = listeners.get(name) ?? [];
+        const index = list.indexOf(fn);
+        if (index >= 0) list.splice(index, 1);
+      };
     },
     inject(_deps, callback) {
       callback(makeReady());
@@ -91,7 +98,7 @@ async function makeHarness({ withPanels = true } = {}) {
     },
   };
 
-  return { ctx, stateFile, registered, opened, badges, scenes, commands, shortcuts };
+  return { ctx, stateFile, registered, opened, badges, scenes, commands, shortcuts, listeners };
 }
 
 test('normalizeConfig: retentionHours defaults, accepts fractions, zero, and clamps', () => {
@@ -102,6 +109,12 @@ test('normalizeConfig: retentionHours defaults, accepts fractions, zero, and cla
   assert.equal(normalizeConfig({ retentionHours: -1 }).retentionHours, 6);
   assert.equal(normalizeConfig({ retentionHours: 'abc' }).retentionHours, 6);
   assert.equal(normalizeConfig({ retentionHours: 10_000 }).retentionHours, 720);
+});
+
+test('normalizeConfig: relayQuestions defaults on and only an explicit false disables it', () => {
+  assert.equal(normalizeConfig({}).relayQuestions, true);
+  assert.equal(normalizeConfig({ relayQuestions: true }).relayQuestions, true);
+  assert.equal(normalizeConfig({ relayQuestions: false }).relayQuestions, false);
 });
 
 test('apply registers a valid panel, the jump scene, /ws and the shortcut', async () => {
@@ -168,4 +181,32 @@ test('apply tolerates a context without inject (small test hosts)', async () => 
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(harness.registered.length, 1);
   assert.equal(harness.registered[0].descriptor.title, 'Inbox');
+});
+
+test('apply registers the background question relay by default and can disable it', async () => {
+  const onHarness = await makeHarness();
+  apply(onHarness.ctx, { lang: 'zh', stateFile: onHarness.stateFile, shortcut: 'off' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(onHarness.listeners.get('user-questions/request')?.length, 1);
+
+  const offHarness = await makeHarness();
+  apply(offHarness.ctx, {
+    lang: 'zh',
+    stateFile: offHarness.stateFile,
+    shortcut: 'off',
+    relayQuestions: false,
+  });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(offHarness.listeners.get('user-questions/request')?.length ?? 0, 0);
+});
+
+test('apply degrades when userQuestions is missing', async () => {
+  const harness = await makeHarness();
+  assert.doesNotThrow(() => apply(harness.ctx, {
+    lang: 'en',
+    stateFile: harness.stateFile,
+    shortcut: 'off',
+  }));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(harness.listeners.get('user-questions/request')?.length, 1);
 });

@@ -419,3 +419,39 @@ test('panel: header and footer keep the host chrome padding', () => {
     assert.equal(footer.props.paddingX, 1, 'the footer clears the panel edge');
   }
 });
+
+test('panel: a waiting row shows the green dot, stays bold, and says waiting', () => {
+  const waitingRow = makeRow({
+    id: 'wait',
+    title: '后台计划',
+    status: 'running',
+    finishedAt: 0,
+    seenAt: 0,
+    updatedAt: NOW - 10_000,
+    runningAt: NOW - 20_000,
+    waiting: true,
+    waitingAt: NOW - 5_000,
+  });
+  const rows = [waitingRow, makeRow({ id: 'cur', title: '修复登录页样式' })];
+  const harness = createHarness(() => ({
+    groups: [{ key: '/repo/app', cwd: '/repo/app', title: 'dsh-plugins', running: 1, unread: 1, rows }],
+    running: 1,
+    unread: 1,
+    flatRows: rows,
+    currentId: 'cur',
+    agentsAvailable: true,
+    version: 1,
+  }));
+  const tree = harness.render();
+  const rowBox = findBox(tree, 'wait');
+  const glyph = directTexts(rowBox)[0];
+  assert.equal(textOf(glyph), '●');
+  assert.equal(glyph.props.color, 'success');
+  assert.equal(glyph.props.bold, true);
+  const title = textNodes(rowBox).find(node => textOf(node) === '后台计划');
+  assert.ok(title, 'the row title is rendered');
+  assert.equal(title.props.bold, true);
+  const lines = textLines(tree);
+  assert.ok(lines.includes('待回答'), lines.join('\n'));
+  assert.ok(lines.includes('⠋ 1 运行 · ● 1 未读'), lines.join('\n'));
+});

@@ -22,6 +22,7 @@
 import { readAttachedSessionId } from './current.js';
 import { JUMP_SCENE_ID, createJumpQueue, createJumpScene } from './jump.js';
 import { createPanel } from './panel.js';
+import { createQuestionRelay } from './questions.js';
 import { DEFAULT_STATE_FILE, createStore } from './store.js';
 import { createTracker } from './tracker.js';
 import { messagesFor, resolveLang } from './strings.js';
@@ -45,7 +46,7 @@ function messageOf(error) {
 }
 
 /**
- * @param {{lang?: unknown, stateFile?: unknown, shortcut?: unknown, retentionHours?: unknown}} [config]
+ * @param {{lang?: unknown, stateFile?: unknown, shortcut?: unknown, retentionHours?: unknown, relayQuestions?: unknown}} [config]
  */
 export function normalizeConfig(config) {
   const source = config && typeof config === 'object' ? config : {};
@@ -61,12 +62,16 @@ export function normalizeConfig(config) {
     || !Number.isFinite(hours) || hours < 0
     ? DEFAULT_RETENTION_HOURS
     : Math.min(hours, MAX_RETENTION_HOURS);
-  return { lang, stateFile, shortcut, retentionHours };
+  // On by default: a background ask currently fails with NO_PROVIDER, and the
+  // relay is inert as soon as another answerer claims the request. An explicit
+  // `false` is the escape hatch for a host that handles it natively.
+  const relayQuestions = source.relayQuestions !== false;
+  return { lang, stateFile, shortcut, retentionHours, relayQuestions };
 }
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{lang?: 'zh' | 'en' | 'auto', stateFile?: string, shortcut?: string}} [config]
+ * @param {{lang?: 'zh' | 'en' | 'auto', stateFile?: string, shortcut?: string, retentionHours?: number, relayQuestions?: boolean}} [config]
  */
 export function apply(ctx, config = {}) {
   const logger = ctx?.logger;
@@ -99,12 +104,42 @@ export function apply(ctx, config = {}) {
     tracker.attach();
     void tracker.load();
 
+    // A background ask has no answerer in dsh-tui 0.17.0: this relay parks it
+    // instead of letting the turn fail, and re-delivers it after a jump. It is
+    // feature-detected and yields to the host on every request, so the official
+    // fix makes it inert without a code change.
+    let relay;
+    if (settings.relayQuestions) {
+      try {
+        relay = createQuestionRelay({
+          ctx,
+          tracker,
+          probe: () => readAttachedSessionId(),
+          logger,
+        });
+        relay.attach();
+      } catch (error) {
+        try {
+          relay?.dispose();
+        } catch {
+          // A partially attached relay is still best-effort.
+        }
+        relay = undefined;
+        warn('registering the background question relay failed', error);
+      }
+    }
+
     if (typeof ctx?.effect === 'function') {
       try {
         ctx.effect(() => () => {
+          try {
+            relay?.dispose();
+          } catch {
+            // Disposal is best-effort.
+          }
           tracker.dispose();
           void store.close().catch(() => {});
-        }, 'workspace-sidebar tracker');
+        }, 'workspace-sidebar lifecycle');
       } catch (error) {
         warn('registering the lifecycle effect failed', error);
       }

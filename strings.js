@@ -38,6 +38,7 @@ const ZH = {
     if (parts.length > 0) return parts.join(' · ');
     return total > 0 ? `共 ${total} 个会话` : '暂无会话';
   },
+  waiting: '待回答',
   opening: '正在打开会话…',
   newOpening: '正在新建会话…',
   newUnavailable: '无法新建：场景服务不可用',
@@ -81,6 +82,7 @@ const EN = {
     if (parts.length > 0) return parts.join(' · ');
     return total > 0 ? `${total} conversation${total === 1 ? '' : 's'}` : 'nothing here yet';
   },
+  waiting: 'needs you',
   opening: 'Opening session…',
   newOpening: 'Creating a new session…',
   newUnavailable: 'Cannot create: the scene service is unavailable',

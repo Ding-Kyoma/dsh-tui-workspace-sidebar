@@ -15,7 +15,9 @@ import {
   foldAgentEvents,
   formatWhen,
   glyphFor,
+  isAttention,
   isUnread,
+  isWaiting,
   isVisible,
   nextExpiry,
   normalizeCwd,
@@ -600,4 +602,71 @@ test('path helpers normalize separators and collapse one-line text', () => {
   assert.equal(basename(''), '');
   assert.equal(oneLine('a\n\n b\tc', 40), 'a b c');
   assert.equal(oneLine('x'.repeat(10), 5), 'xxxx…');
+});
+
+test('waiting: a parked question uses the finished-unread dot and leads its project', () => {
+  const parked = row({
+    id: 'parked',
+    status: 'running',
+    finishedAt: 0,
+    seenAt: 0,
+    runningAt: 10,
+    waiting: true,
+    waitingAt: 20,
+    updatedAt: 20,
+  });
+  assert.equal(isWaiting(parked), true);
+  assert.equal(isAttention(parked), true);
+  assert.deepEqual(glyphFor(parked, 3), { char: '●', color: 'success', dim: false });
+  assert.equal(rankOf(parked), RANK_UNREAD);
+  assert.equal(orderAtOf(parked), 20);
+  assert.equal(isVisible(parked, { now: 10 * HOUR, retentionMs: 1 }), true);
+});
+
+test('waiting: the first ask anchors the row and a finished turn clears the flag', () => {
+  const running = applyRowState(undefined, {
+    id: 's1', cwd: '/r', title: 't', running: true, waiting: true, updatedAt: 10, currentId: '', now: 10,
+  });
+  assert.equal(running.waiting, true);
+  assert.equal(running.waitingAt, 10);
+
+  const later = applyRowState(running, {
+    id: 's1', cwd: '/r', title: 't', running: true, waiting: true, updatedAt: 15, currentId: '', now: 15,
+  });
+  assert.equal(later.waitingAt, 10, 'the first ask keeps the anchor');
+
+  const done = applyRowState(later, {
+    id: 's1', cwd: '/r', title: 't', running: false, updatedAt: 20, currentId: '', now: 20,
+  });
+  assert.equal(done.waiting, false);
+  assert.equal(done.waitingAt, 0);
+});
+
+test('buildGroups: a waiting row is attention even while running', () => {
+  const now = 100;
+  const rows = [
+    row({ id: 'parked', status: 'running', finishedAt: 0, seenAt: 0, runningAt: 10, waiting: true, waitingAt: 20, updatedAt: 20 }),
+    row({ id: 'busy', status: 'running', finishedAt: 0, seenAt: 0, runningAt: 5, updatedAt: 5 }),
+  ];
+  const result = buildGroups(rows, [], '', { now });
+  assert.equal(result.running, 2);
+  assert.equal(result.unread, 1);
+  assert.deepEqual(result.groups[0].rows.map(item => item.id), ['parked', 'busy']);
+});
+
+test('pruneRows/nextExpiry: a waiting row is never swept or capped away', () => {
+  const now = 100;
+  const rows = new Map([
+    ['parked', row({ id: 'parked', waiting: true, waitingAt: 1, finishedAt: 1, updatedAt: 1 })],
+    ['old', row({ id: 'old', finishedAt: 2, updatedAt: 2, seenAt: 2, title: 'old' })],
+  ]);
+  assert.equal(pruneRows(rows, 1, now, { retentionMs: HOUR }), 1);
+  assert.equal(rows.has('parked'), true);
+  assert.equal(rows.has('old'), false);
+
+  const onlyWaiting = new Map([
+    ['parked', row({ id: 'parked', waiting: true, waitingAt: 1, finishedAt: 1, updatedAt: 1 })],
+  ]);
+  assert.equal(pruneRows(onlyWaiting, 1, 10 * HOUR, { retentionMs: 1 }), 0);
+  assert.equal(nextExpiry(onlyWaiting, 1, ''), 0);
 });

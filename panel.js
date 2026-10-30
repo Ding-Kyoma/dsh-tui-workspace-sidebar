@@ -316,6 +316,10 @@ export function createPanel(options) {
       // screen should be the one under the mouse, not the one you are reading.
       const emphasized = isSelected || isCurrent;
       const fresh = row.status === 'finished' && now - row.finishedAt < FRESH_FINISH_MS;
+      // A parked question stays bold until it is answered: unlike `fresh`, this
+      // is not a short animation but a standing request for attention.
+      const waiting = row.waiting === true;
+      const bold = emphasized || fresh || waiting;
       const glyph = glyphFor(row, frame);
       const when = showTime ? formatWhen(row.updatedAt, now, lang) : '';
       return h(
@@ -334,17 +338,23 @@ export function createPanel(options) {
           },
         },
         h(Box, { width: 2, flexShrink: 0 }, h(Text, { color: focused && isSelected ? 'accent' : undefined }, focused && isSelected ? '❯' : ' ')),
-        h(Text, { color: glyph.color, bold: emphasized || fresh, dimColor: glyph.dim }, glyph.char),
+        h(Text, { color: glyph.color, bold, dimColor: glyph.dim }, glyph.char),
         h(Text, null, ' '),
         h(
           Box,
           { flexGrow: 1, flexShrink: 1, minWidth: 0 },
           h(Text, {
-            bold: emphasized || fresh,
+            bold,
             color: emphasized ? 'accent' : undefined,
             wrap: 'truncate-end',
           }, row.title || strings.untitled),
         ),
+        // The green dot is the same "unread" signal; this suffix is what tells
+        // the two apart without inventing a second glyph. It is dropped on a
+        // very narrow panel where the title needs every cell.
+        waiting && showTime
+          ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, strings.waiting))
+          : null,
         when !== ''
           ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, when))
           : null,

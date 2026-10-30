@@ -46,3 +46,8 @@ test('the idle footer leaves the focus key to the host', () => {
     assert.doesNotMatch(copy.hintFocused, /Ctrl\+B/i, `${lang}.hintFocused must not repeat the host focus hint`);
   }
 });
+
+test('waiting copy exists in both languages', () => {
+  assert.equal(messagesFor('zh').waiting, '待回答');
+  assert.equal(messagesFor('en').waiting, 'needs you');
+});

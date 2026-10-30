@@ -92,3 +92,17 @@ test('store: saving copies the input and normalizes timestamps', async () => {
   assert.equal(parsed.sessions.a.finishedAt, 0);
   assert.equal(parsed.sessions.a.seenAt, 0);
 });
+
+test('store: save drops the in-memory waiting and plan fields', async () => {
+  const file = await tempFile();
+  const store = createStore({ file });
+  await store.ready();
+  store.save({
+    a: { status: 'running', waiting: true, waitingAt: 10, plan: true, updatedAt: 10, finishedAt: 0, seenAt: 0 },
+  });
+  await store.flush();
+  const parsed = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(parsed.sessions.a.waiting, undefined);
+  assert.equal(parsed.sessions.a.waitingAt, undefined);
+  assert.equal(parsed.sessions.a.plan, undefined);
+});

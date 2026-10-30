@@ -27,6 +27,7 @@ import {
   buildGroups,
   emptyFold,
   foldAgentEvents,
+  isAttention,
   isUnread,
   isVisible,
   nextExpiry,
@@ -109,6 +110,8 @@ function sameRow(left, right) {
     && left.status === right.status
     && left.failed === right.failed
     && Boolean(left.plan) === Boolean(right.plan)
+    && Boolean(left.waiting) === Boolean(right.waiting)
+    && (Number(left.waitingAt) || 0) === (Number(right.waitingAt) || 0)
     && left.updatedAt === right.updatedAt
     && left.finishedAt === right.finishedAt
     && left.seenAt === right.seenAt
@@ -141,6 +144,13 @@ export function createTracker(options) {
   const rows = new Map();
   /** @type {Map<string, {count: number, state: any}>} */
   const folds = new Map();
+  /**
+   * Agents whose turn is parked on a background question. The set can lead the
+   * row (the relay may park before the agent is tracked), so `upsertAgent`
+   * applies it on every fold. It is deliberately not persisted.
+   * @type {Set<string>}
+   */
+  const waitingIds = new Set();
   /** @type {{path: string, title: string}[]} */
   let registry = [];
   let agentsService;
@@ -217,7 +227,7 @@ export function createTracker(options) {
     const out = [];
     for (const [id, row] of rows) {
       if (currentId !== '' && id === currentId) continue;
-      if (isUnread(row)) out.push(row);
+      if (isAttention(row)) out.push(row);
     }
     return out;
   }
@@ -296,6 +306,9 @@ export function createTracker(options) {
       // Display-only while the row runs: the panel colours a planning turn's
       // spinner. applyRowState clears it on finish; the store never persists it.
       plan: fold.plan,
+      // In-memory attention flag: a parked background question. The set is the
+      // source of truth because it can be set before the agent is first folded.
+      waiting: waitingIds.has(id),
       updatedAt: fold.updatedAt,
       // The row's sort anchor while it runs: the start of its current turn.
       // In-turn events keep updating `updatedAt` without moving the row.
@@ -334,6 +347,56 @@ export function createTracker(options) {
     return changed;
   }
 
+  /**
+   * The session the TUI is attached to, as far as the tracker knows. The relay
+   * uses it (together with the probe) to decide when a parked question can be
+   * re-delivered.
+   * @returns {string}
+   */
+  function getCurrentId() {
+    return currentId;
+  }
+
+  /**
+   * Mark a conversation as parked on a question (or clear the mark).
+   *
+   * The set is the source of truth: the relay can park a question before the
+   * agent has been folded into a row, and `upsertAgent` applies the flag on the
+   * next fold. The row fields are display-only; `store.save` drops them, so a
+   * restart never resurrects a question whose tool call is gone.
+   *
+   * @param {string} id
+   * @param {boolean} value
+   * @returns {boolean} whether anything changed
+   */
+  function setWaiting(id, value) {
+    if (disposed) return false;
+    const agentId = typeof id === 'string' ? id : '';
+    if (agentId === '') return false;
+    const next = value === true;
+    const inSet = waitingIds.has(agentId);
+    const row = rows.get(agentId);
+    const rowWaiting = row?.waiting === true;
+    if (inSet === next && (row === undefined || rowWaiting === next)) return false;
+    if (next) waitingIds.add(agentId);
+    else waitingIds.delete(agentId);
+    if (row !== undefined && rowWaiting !== next) {
+      if (next) {
+        row.waiting = true;
+        row.waitingAt = Number(row.waitingAt) > 0 ? Number(row.waitingAt) : clock();
+      } else {
+        row.waiting = false;
+        row.waitingAt = 0;
+      }
+      persist();
+      bump();
+    } else {
+      // Only the set changed; no row to repaint yet.
+      bump();
+    }
+    return true;
+  }
+
   function readAttached() {
     if (probe === undefined) return undefined;
     try {
@@ -367,6 +430,8 @@ export function createTracker(options) {
     const now = clock();
     for (const [id, row] of [...rows]) {
       if (liveIds.has(id)) continue;
+      // The agent is gone; any parked question for it can never be answered.
+      waitingIds.delete(id);
       if (row.status === 'running') {
         // The agent is gone; the turn it was in can never be reported on now,
         // so it settles as finished with the usual read/unread rule.
@@ -418,6 +483,7 @@ export function createTracker(options) {
     const id = agentIdOf(agent);
     if (id === '') return;
     folds.delete(id);
+    waitingIds.delete(id);
     const row = rows.get(id);
     if (row === undefined || row.status !== 'running') return;
     const now = clock();
@@ -651,6 +717,8 @@ export function createTracker(options) {
     reconcile,
     markSeen,
     setCurrent,
+    setWaiting,
+    getCurrentId,
     setPanelVisible,
     setPanelHandle,
     refreshWorkspaces,

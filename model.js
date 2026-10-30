@@ -194,6 +194,33 @@ export function isUnread(row) {
 }
 
 /**
+ * Whether the conversation is parked on a question for the person.
+ *
+ * A background session that asks `ask_user_question` / `exit_plan_mode` cannot
+ * reach the TUI's answerer (it is bound to the attached channel), so the
+ * question relay parks it instead of letting the turn fail. The row carries the
+ * flag until the question settles; it is in-memory only and never persisted.
+ *
+ * @param {{waiting?: boolean}} row
+ * @returns {boolean}
+ */
+export function isWaiting(row) {
+  if (!row || typeof row !== 'object') return false;
+  return row.waiting === true;
+}
+
+/**
+ * Whether a row wants the person's attention: a finished turn nobody has read,
+ * or a background question parked for an answer. Both use the same green dot.
+ *
+ * @param {any} row
+ * @returns {boolean}
+ */
+export function isAttention(row) {
+  return isWaiting(row) || isUnread(row);
+}
+
+/**
  * Last moment anything happened in a row. The finish marker can be observed a
  * moment after the final event, so the later of the two wins.
  *
@@ -226,6 +253,12 @@ export function activityAt(row) {
  */
 export function orderAtOf(row) {
   if (!row || typeof row !== 'object') return 0;
+  if (isWaiting(row)) {
+    // A parked question is an event of its own: the row should surface at the
+    // moment it started waiting, not at the start of the turn that asked.
+    const waitingAt = Number(row.waitingAt);
+    if (waitingAt > 0) return waitingAt;
+  }
   if (row.status === 'running') {
     const anchor = Number(row.runningAt);
     return anchor > 0 ? anchor : activityAt(row);
@@ -262,6 +295,7 @@ export const DONE_ROWS_PER_PROJECT = 10;
  */
 export function rankOf(row) {
   if (!row || typeof row !== 'object') return RANK_DONE;
+  if (isWaiting(row)) return RANK_UNREAD;
   if (row.status === 'running') return RANK_RUNNING;
   if (isUnread(row)) return RANK_UNREAD;
   return RANK_DONE;
@@ -298,6 +332,7 @@ function viewOf(options = {}) {
  */
 export function isVisible(row, options = {}) {
   if (!row || typeof row !== 'object') return false;
+  if (isWaiting(row)) return true;
   if (row.status === 'running') return true;
   const view = viewOf(options);
   if (view.currentId !== '' && String(row.id) === view.currentId) return true;
@@ -323,6 +358,10 @@ export function isVisible(row, options = {}) {
  * finished row always clears it, because the inbox only colours a spinner
  * that is actually spinning.
  *
+ * `waiting` is set while a background question is parked for the person. It is
+ * cleared when the question settles or the turn finishes. Like `plan` and
+ * `runningAt`, it is in-memory only and never written to the store.
+ *
  * @param {any} prev
  * @param {{
  *   id: string,
@@ -331,6 +370,7 @@ export function isVisible(row, options = {}) {
  *   running: boolean,
  *   failed?: boolean,
  *   plan?: boolean,
+ *   waiting?: boolean,
  *   updatedAt: number,
  *   turnStartedAt?: number,
  *   currentId: string,
@@ -358,6 +398,12 @@ export function applyRowState(prev, input) {
     const runningAt = Math.max(prevAnchor, turnAnchor)
       || updatedAt
       || (Number(input.now) || Date.now());
+    const waiting = input.waiting === true;
+    const waitingAt = waiting
+      ? (prev?.waiting === true && Number(prev.waitingAt) > 0
+        ? Number(prev.waitingAt)
+        : (Number(input.now) || Date.now()))
+      : 0;
     return {
       id,
       cwd,
@@ -365,6 +411,8 @@ export function applyRowState(prev, input) {
       status: 'running',
       failed: Boolean(input.failed),
       plan: input.plan === true,
+      waiting,
+      waitingAt,
       updatedAt,
       finishedAt: 0,
       seenAt: Number(prev?.seenAt) || 0,
@@ -381,6 +429,8 @@ export function applyRowState(prev, input) {
       status: 'finished',
       failed: Boolean(input.failed),
       plan: false,
+      waiting: false,
+      waitingAt: 0,
       updatedAt: updatedAt || finishedAt,
       finishedAt,
       // A session the person is actively looking at settles as read: a badge
@@ -396,6 +446,7 @@ export function applyRowState(prev, input) {
     // is where the person is, and it is the row the panel highlights. It is
     // adopted as read — nothing was missed while it was on screen.
     const finishedAt = updatedAt > 0 ? updatedAt : (Number(input.now) || Date.now());
+    const waiting = input.waiting === true;
     return {
       id,
       cwd,
@@ -403,6 +454,8 @@ export function applyRowState(prev, input) {
       status: 'finished',
       failed: Boolean(input.failed),
       plan: false,
+      waiting,
+      waitingAt: waiting ? (Number(input.now) || Date.now()) : 0,
       updatedAt: finishedAt,
       finishedAt,
       seenAt: finishedAt,
@@ -411,6 +464,7 @@ export function applyRowState(prev, input) {
   }
 
   const finishedAt = Number(prev.finishedAt) || 0;
+  const waiting = input.waiting === undefined ? prev.waiting === true : input.waiting === true;
   const next = {
     id,
     cwd,
@@ -418,6 +472,10 @@ export function applyRowState(prev, input) {
     status: prev.status === 'finished' ? 'finished' : prev.status,
     failed: input.failed === undefined ? Boolean(prev.failed) : Boolean(input.failed),
     plan: false,
+    waiting,
+    waitingAt: waiting
+      ? (Number(prev.waitingAt) > 0 ? Number(prev.waitingAt) : (Number(input.now) || Date.now()))
+      : 0,
     updatedAt: Math.max(Number(prev.updatedAt) || 0, updatedAt),
     finishedAt,
     seenAt: Number(prev.seenAt) || 0,
@@ -455,7 +513,7 @@ export function pruneRows(rows, max, now, options = {}) {
   const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : 300;
   if (rows.size <= limit) return removed;
   const finished = [...rows.entries()]
-    .filter(([id, row]) => row?.status === 'finished' && id !== view.currentId)
+    .filter(([id, row]) => row?.status === 'finished' && row?.waiting !== true && id !== view.currentId)
     .sort((left, right) => activityAt(left[1]) - activityAt(right[1]));
   while (rows.size > limit && finished.length > 0) {
     const [id] = finished.shift();
@@ -482,6 +540,7 @@ export function nextExpiry(rows, retentionMs, currentId) {
   let earliest = 0;
   for (const [id, row] of rows) {
     if (!row || row.status === 'running') continue;
+    if (isWaiting(row)) continue;
     if (current !== '' && id === current) continue;
     const at = activityAt(row) + retention;
     if (earliest === 0 || at < earliest) earliest = at;
@@ -490,7 +549,7 @@ export function nextExpiry(rows, retentionMs, currentId) {
 }
 
 /**
- * @typedef {{id: string, cwd: string, title: string, status: string, failed: boolean, plan?: boolean, updatedAt: number, finishedAt: number, seenAt: number, runningAt?: number}} SidebarRow
+ * @typedef {{id: string, cwd: string, title: string, status: string, failed: boolean, plan?: boolean, waiting?: boolean, waitingAt?: number, updatedAt: number, finishedAt: number, seenAt: number, runningAt?: number}} SidebarRow
  */
 
 /**
@@ -634,7 +693,10 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     let unread = 0;
     for (const row of list) {
       if (row.status === 'running') running += 1;
-      else if (isUnread(row) && String(row.id) !== current) unread += 1;
+      // A parked question is attention even while its turn is still running;
+      // it is also counted in `running`, so the header says both "running" and
+      // "unread" rather than hiding one of the two facts.
+      if (isAttention(row) && String(row.id) !== current) unread += 1;
     }
     const title = titles.get(bucket.key) ?? basename(bucket.cwd) ?? '';
     return {
@@ -724,6 +786,11 @@ export function spinnerGlyph(frame) {
  * has looked at yet; the dimmed checkmark once it has been read; a cross for a
  * failed turn (also dimmed once read).
  *
+ * A parked background question borrows the finished-unread dot, even while its
+ * turn is still running: it is the same "someone is waiting for you" signal,
+ * and it is the one attention glyph the person already knows. The row text
+ * carries the distinction (`待回答` / `needs you`), not a second glyph.
+ *
  * A running plan-mode conversation keeps the same spinner character and dim
  * state but borrows the theme's plan colour, so the row says "this turn is
  * planning" without a second glyph. Only the row glyphs take that colour: the
@@ -734,6 +801,9 @@ export function spinnerGlyph(frame) {
  * @returns {{char: string, color: string | undefined, dim: boolean}}
  */
 export function glyphFor(row, frame) {
+  if (isWaiting(row)) {
+    return { char: '●', color: 'success', dim: false };
+  }
   if (row?.status === 'running') {
     return {
       char: spinnerGlyph(frame),
