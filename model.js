@@ -93,10 +93,10 @@ export function messageText(message) {
 
 /**
  * A fresh folding state.
- * @returns {{count: number, title: string, prompt: string, summary: string, updatedAt: number, failed: boolean}}
+ * @returns {{count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt: number, failed: boolean}}
  */
 export function emptyFold() {
-  return { count: 0, title: '', prompt: '', summary: '', updatedAt: 0, failed: false };
+  return { count: 0, title: '', prompt: '', summary: '', updatedAt: 0, turnStartedAt: 0, failed: false };
 }
 
 /**
@@ -105,15 +105,22 @@ export function emptyFold() {
  * `fromIndex` is the number of events already folded; only the tail is read, so
  * a running session's whole log is not re-scanned on every status change.
  *
+ * `updatedAt` tracks the newest event (it drives the relative time and the
+ * retention window). `turnStartedAt` tracks the newest `turn/start` event: it is
+ * the ordering anchor for a running row, so the hundreds of events inside one
+ * turn cannot make two concurrent conversations trade places.
+ *
  * @param {readonly unknown[]} events
  * @param {number} fromIndex
- * @param {{count: number, title: string, prompt: string, summary: string, updatedAt: number, failed: boolean}} state
- * @returns {{state: {count: number, title: string, prompt: string, summary: string, updatedAt: number, failed: boolean}, count: number}}
+ * @param {{count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt?: number, failed: boolean}} state
+ * @returns {{state: {count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt: number, failed: boolean}, count: number}}
  */
 export function foldAgentEvents(events, fromIndex, state) {
   const input = Array.isArray(events) ? events : [];
   const start = Number.isFinite(fromIndex) && fromIndex >= 0 ? Math.min(Math.floor(fromIndex), input.length) : 0;
   let { title, prompt, summary, updatedAt, failed } = state;
+  // A caller may hand in a state folded before the anchor existed; treat it as 0.
+  let turnStartedAt = Number(state?.turnStartedAt) || 0;
   for (let index = start; index < input.length; index += 1) {
     const event = input[index];
     if (!event || typeof event !== 'object') continue;
@@ -121,6 +128,10 @@ export function foldAgentEvents(events, fromIndex, state) {
     if (Number.isFinite(time) && time > 0) updatedAt = Math.max(updatedAt, time);
     const data = event.data && typeof event.data === 'object' ? event.data : {};
     switch (event.type) {
+      case 'turn/start': {
+        if (Number.isFinite(time) && time > 0) turnStartedAt = Math.max(turnStartedAt, time);
+        break;
+      }
       case 'session/title': {
         const next = typeof data.title === 'string' ? oneLine(data.title, 120) : '';
         if (next !== '') title = next;
@@ -156,7 +167,7 @@ export function foldAgentEvents(events, fromIndex, state) {
         break;
     }
   }
-  return { state: { count: input.length, title, prompt, summary, updatedAt, failed }, count: input.length };
+  return { state: { count: input.length, title, prompt, summary, updatedAt, turnStartedAt, failed }, count: input.length };
 }
 
 /**
@@ -172,12 +183,42 @@ export function isUnread(row) {
 /**
  * Last moment anything happened in a row. The finish marker can be observed a
  * moment after the final event, so the later of the two wins.
+ *
+ * This is the activity clock: it feeds the relative time and the retention
+ * window. It is deliberately *not* the sort key — see {@link orderAtOf}.
+ *
  * @param {{updatedAt?: number, finishedAt?: number}} row
  * @returns {number}
  */
 export function activityAt(row) {
   if (!row || typeof row !== 'object') return 0;
   return Math.max(Number(row.updatedAt) || 0, Number(row.finishedAt) || 0);
+}
+
+/**
+ * The ordering anchor: when the row's current state began.
+ *
+ * A running row is anchored to the start of its turn, not to its latest event.
+ * A turn emits hundreds of events (tool calls, results, steps, background job
+ * churn), so sorting by activity made two conversations that run at the same
+ * time trade places on every event. The anchor only moves when the state moves.
+ * A finished row is anchored to its finish marker, so a late title or job event
+ * cannot lift it afterwards either.
+ *
+ * Rows without an anchor (restored from disk, hand-built in tests) fall back to
+ * their activity time, which keeps the previous ordering for them.
+ *
+ * @param {any} row
+ * @returns {number}
+ */
+export function orderAtOf(row) {
+  if (!row || typeof row !== 'object') return 0;
+  if (row.status === 'running') {
+    const anchor = Number(row.runningAt);
+    return anchor > 0 ? anchor : activityAt(row);
+  }
+  const finished = Number(row.finishedAt);
+  return finished > 0 ? finished : activityAt(row);
 }
 
 /**
@@ -227,6 +268,11 @@ export function isVisible(row, options = {}) {
  * always has a highlight to land on; visibility over time is decided later by
  * {@link isVisible} and {@link pruneRows}.
  *
+ * `runningAt` is the row's ordering anchor while it runs ({@link orderAtOf}).
+ * It is captured once per turn and never advanced by in-turn events, which is
+ * what keeps concurrent running conversations from swapping places. The field
+ * is in-memory only: a running row is dropped on the next start anyway.
+ *
  * @param {any} prev
  * @param {{
  *   id: string,
@@ -235,6 +281,7 @@ export function isVisible(row, options = {}) {
  *   running: boolean,
  *   failed?: boolean,
  *   updatedAt: number,
+ *   turnStartedAt?: number,
  *   currentId: string,
  *   now: number,
  * }} input
@@ -251,6 +298,15 @@ export function applyRowState(prev, input) {
   const isCurrent = id === String(input.currentId ?? '');
 
   if (input.running) {
+    // The anchor is monotonic: a new turn moves it forward, an old log tail
+    // (or a fold reset after compaction) never drags it backwards. The last
+    // event time is only used when the row is first observed and the log has
+    // no turn marker to offer.
+    const prevAnchor = prev?.status === 'running' ? Number(prev.runningAt) || 0 : 0;
+    const turnAnchor = Number(input.turnStartedAt) || 0;
+    const runningAt = Math.max(prevAnchor, turnAnchor)
+      || updatedAt
+      || (Number(input.now) || Date.now());
     return {
       id,
       cwd,
@@ -260,6 +316,7 @@ export function applyRowState(prev, input) {
       updatedAt,
       finishedAt: 0,
       seenAt: Number(prev?.seenAt) || 0,
+      runningAt,
     };
   }
 
@@ -276,6 +333,7 @@ export function applyRowState(prev, input) {
       // A session the person is actively looking at settles as read: a badge
       // for the conversation already on screen would be pure noise.
       seenAt: isCurrent ? finishedAt : Number(prev.seenAt) || 0,
+      runningAt: 0,
     };
   }
 
@@ -294,6 +352,7 @@ export function applyRowState(prev, input) {
       updatedAt: finishedAt,
       finishedAt,
       seenAt: finishedAt,
+      runningAt: 0,
     };
   }
 
@@ -307,6 +366,7 @@ export function applyRowState(prev, input) {
     updatedAt: Math.max(Number(prev.updatedAt) || 0, updatedAt),
     finishedAt,
     seenAt: Number(prev.seenAt) || 0,
+    runningAt: 0,
   };
   if (next.status === 'finished' && isCurrent) next.seenAt = Math.max(next.seenAt, finishedAt);
   return next;
@@ -375,7 +435,7 @@ export function nextExpiry(rows, retentionMs, currentId) {
 }
 
 /**
- * @typedef {{id: string, cwd: string, title: string, status: string, failed: boolean, updatedAt: number, finishedAt: number, seenAt: number}} SidebarRow
+ * @typedef {{id: string, cwd: string, title: string, status: string, failed: boolean, updatedAt: number, finishedAt: number, seenAt: number, runningAt?: number}} SidebarRow
  */
 
 /**
@@ -398,16 +458,19 @@ export function visibleRows(rows, currentId, options = {}) {
 }
 
 /**
- * Newest activity first — the same value the row prints on its right — with a
- * running row winning a timestamp tie so a just-started conversation is not
- * buried under a just-finished one.
+ * Newest state first, by the row's ordering anchor ({@link orderAtOf}): a
+ * running row is anchored to its turn start, a finished row to its finish
+ * marker. Activity *inside* a turn never reorders the list, so two concurrent
+ * conversations keep a fixed relative order instead of trading places on every
+ * event. A running row wins an exact tie so a just-started conversation is not
+ * buried under a just-finished one; the id keeps the order total otherwise.
  * @param {SidebarRow} left
  * @param {SidebarRow} right
  * @returns {number}
  */
-function compareByActivity(left, right) {
-  const leftAt = Number(left.updatedAt) || 0;
-  const rightAt = Number(right.updatedAt) || 0;
+function compareByOrder(left, right) {
+  const leftAt = orderAtOf(left);
+  const rightAt = orderAtOf(right);
   if (leftAt !== rightAt) return rightAt - leftAt;
   const leftRunning = left.status === 'running' ? 0 : 1;
   const rightRunning = right.status === 'running' ? 0 : 1;
@@ -416,9 +479,10 @@ function compareByActivity(left, right) {
 }
 
 /**
- * Group visible rows by project, newest activity first inside each project.
+ * Group visible rows by project, newest state first inside each project.
  * Projects themselves keep the old ordering: a project with something running
- * leads, then by its freshest row.
+ * leads, then by its freshest row — using the same anchor, so projects holding
+ * concurrent running conversations do not swap either.
  *
  * The attached session is listed too; it is simply never counted as unread.
  *
@@ -461,7 +525,7 @@ export function buildGroups(rows, registry, currentId, options = {}) {
   }
 
   const projects = [...buckets.values()].map(bucket => {
-    const list = [...bucket.rows].sort(compareByActivity);
+    const list = [...bucket.rows].sort(compareByOrder);
     let running = 0;
     let unread = 0;
     for (const row of list) {
@@ -484,8 +548,8 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     const leftRunning = left.running > 0 ? 0 : 1;
     const rightRunning = right.running > 0 ? 0 : 1;
     if (leftRunning !== rightRunning) return leftRunning - rightRunning;
-    const leftNewest = left.rows.length > 0 ? Number(left.rows[0].updatedAt) || 0 : 0;
-    const rightNewest = right.rows.length > 0 ? Number(right.rows[0].updatedAt) || 0 : 0;
+    const leftNewest = left.rows.length > 0 ? orderAtOf(left.rows[0]) : 0;
+    const rightNewest = right.rows.length > 0 ? orderAtOf(right.rows[0]) : 0;
     if (leftNewest !== rightNewest) return rightNewest - leftNewest;
     return left.order - right.order;
   });
