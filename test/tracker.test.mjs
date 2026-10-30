@@ -1,0 +1,236 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createTracker } from '../tracker.js';
+
+function makeAgent({ id, status = 'idle', cwd = '/repo/app', origin = 'user', events = [] }) {
+  return {
+    id,
+    status,
+    session: {
+      header: { id, cwd, origin },
+      snapshotEvents: () => events,
+    },
+  };
+}
+
+function makeCtx({ getAgents } = {}) {
+  const listeners = new Map();
+  let agents = getAgents;
+  const ctx = {
+    logger: { warn() {} },
+    on(name, fn) {
+      if (!listeners.has(name)) listeners.set(name, []);
+      listeners.get(name).push(fn);
+      return () => {
+        const list = listeners.get(name) ?? [];
+        const index = list.indexOf(fn);
+        if (index >= 0) list.splice(index, 1);
+      };
+    },
+    get(name, fallback) {
+      if (name === 'agents') return agents ?? fallback;
+      return fallback;
+    },
+    inject() {},
+  };
+  return {
+    ctx,
+    emit(name, payload) {
+      for (const fn of [...(listeners.get(name) ?? [])]) fn(payload);
+    },
+    setAgents(next) {
+      agents = next;
+    },
+  };
+}
+
+function makeStore(initial = {}) {
+  let state = { version: 1, sessions: initial };
+  const saves = [];
+  return {
+    ready: async () => state,
+    snapshot: () => state,
+    save(sessions) {
+      saves.push(sessions);
+      state = { version: 1, sessions };
+    },
+    close: async () => {},
+    saves,
+  };
+}
+
+function promptEvent(text, time = 100) {
+  return { type: 'user/message', time, data: { source: { kind: 'user' }, content: [{ type: 'text', text }] } };
+}
+
+function makeTracker({ agents = [], store = makeStore(), clock = () => 1_000, probe } = {}) {
+  const harness = makeCtx({ getAgents: { list: () => agents } });
+  const tracker = createTracker({ ctx: harness.ctx, store, logger: { warn() {} }, now: clock, probe });
+  tracker.attach();
+  return { tracker, harness, store };
+}
+
+test('attach seeds a running agent with its title', () => {
+  const agent = makeAgent({
+    id: 'a',
+    status: 'running',
+    events: [promptEvent('fix it'), { type: 'session/title', time: 110, data: { title: 'Fix login' } }],
+  });
+  const { tracker } = makeTracker({ agents: [agent] });
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.agentsAvailable, true);
+  assert.equal(snapshot.running, 1);
+  assert.equal(snapshot.groups.length, 1);
+  assert.equal(snapshot.groups[0].title, 'app');
+  assert.equal(snapshot.groups[0].rows[0].title, 'Fix login');
+  assert.equal(snapshot.groups[0].rows[0].status, 'running');
+});
+
+test('running -> idle becomes finished-unread and is persisted', () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness, store } = makeTracker({ agents: [agent], clock: () => clock });
+  assert.equal(tracker.getSnapshot().running, 1);
+
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.running, 0);
+  assert.equal(snapshot.unread, 1);
+  assert.equal(snapshot.groups[0].rows[0].finishedAt, 2_000);
+  assert.equal(store.saves.length, 2);
+  assert.equal(store.saves.at(-1).a.status, 'finished');
+});
+
+test('a session that is current when it finishes settles as read', () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
+  tracker.setCurrent('a');
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.unread, 0);
+  assert.equal(snapshot.groups.length, 0);
+});
+
+test('a finished row becomes read when its session becomes current', () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  assert.equal(tracker.getSnapshot().unread, 1);
+
+  tracker.setCurrent('a');
+  assert.equal(tracker.getSnapshot().unread, 0);
+  assert.equal(tracker.getSnapshot().groups.length, 0);
+});
+
+test('subagents and never-prompted idle sessions are not tracked', () => {
+  const sub = makeAgent({ id: 'sub', status: 'running', origin: 'subagent', events: [promptEvent('x')] });
+  const empty = makeAgent({ id: 'empty', status: 'idle', events: [] });
+  const { tracker } = makeTracker({ agents: [sub, empty] });
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.groups.length, 0);
+  assert.equal(snapshot.rows?.length ?? 0, 0);
+});
+
+test('markSeen removes an unread row; a running row keeps a seen watermark', () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
+  tracker.markSeen('a');
+  assert.equal(tracker.getSnapshot().running, 1);
+
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  assert.equal(tracker.getSnapshot().unread, 1);
+
+  tracker.markSeen('a');
+  assert.equal(tracker.getSnapshot().unread, 0);
+  assert.equal(tracker.getSnapshot().groups.length, 0);
+});
+
+test('a disposed agent that was running finishes as unread', () => {
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent] });
+  harness.emit('agent/disposed', { agent });
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.running, 0);
+  assert.equal(snapshot.unread, 1);
+});
+
+test('load restores unread rows, drops stale running rows and read rows', async () => {
+  const store = makeStore({
+    a: { id: 'a', cwd: '/repo/app', title: 'A', status: 'finished', failed: false, updatedAt: 10, finishedAt: 10, seenAt: 0 },
+    b: { id: 'b', cwd: '/repo/app', title: 'B', status: 'running', failed: false, updatedAt: 10, finishedAt: 0, seenAt: 0 },
+    c: { id: 'c', cwd: '/repo/app', title: 'C', status: 'finished', failed: false, updatedAt: 10, finishedAt: 10, seenAt: 11 },
+  });
+  const { tracker } = makeTracker({ agents: [], store });
+  await tracker.load();
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.unread, 1);
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a']);
+});
+
+test('badge counts unread while hidden and clears when visible', async () => {
+  const calls = [];
+  const panels = { badge: (id, badge) => { calls.push({ id, badge }); return true; } };
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
+  tracker.setPanelHandle(panels, 'session:act1:inbox');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].badge, null);
+
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  assert.deepEqual(calls.at(-1).badge, { level: 'info', unread: 1 });
+
+  tracker.setPanelVisible(true);
+  assert.equal(calls.at(-1).badge, null);
+});
+
+test('workspace registry titles are used for groups', () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const harness = makeCtx({ getAgents: { list: () => [agent] } });
+  const workspaces = { listRegistry: () => [{ path: '/repo/app', title: 'My Project' }] };
+  const ctx = {
+    ...harness.ctx,
+    get(name, fallback) {
+      if (name === 'tuiWorkspaces') return workspaces;
+      return harness.ctx.get(name, fallback);
+    },
+  };
+  const tracker = createTracker({ ctx, store: makeStore(), logger: { warn() {} }, now: () => clock });
+  tracker.attach();
+  tracker.refreshWorkspaces();
+  assert.equal(tracker.getSnapshot().groups[0].title, 'My Project');
+});
+
+test('a missing agents service degrades without throwing', () => {
+  const harness = makeCtx({ getAgents: undefined });
+  const tracker = createTracker({ ctx: harness.ctx, store: makeStore(), logger: { warn() {} } });
+  assert.doesNotThrow(() => tracker.attach());
+  assert.equal(tracker.getSnapshot().agentsAvailable, false);
+  assert.equal(tracker.getSnapshot().groups.length, 0);
+  assert.doesNotThrow(() => tracker.reconcile());
+});
+
+test('the attached-session probe overrides the panel-reported current id', () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock, probe: () => 'a' });
+  assert.equal(tracker.getSnapshot().currentId, 'a');
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  assert.equal(tracker.getSnapshot().unread, 0);
+});

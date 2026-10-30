@@ -1,0 +1,20 @@
+# Workspace sidebar for dsh-tui.
+#
+# Install:
+#   dsh plugin --profile dsh-tui add link:/absolute/path/to/dsh-tui-workspace-sidebar
+#
+# The CLI adds the package to the profile's dependencies and, because this
+# package declares `dsh.bundle.patch`, to `dsh.profile.bundles`.
+#
+# Tune it by id from the profile's own cordis.patch.yml. A row patch replaces
+# the whole `config`, so restate every key you need:
+#
+#   - id: workspace-sidebar
+#     config:
+#       lang: zh
+#       stateFile: ~/.dsh-tui/workspace-sidebar.json
+#       shortcut: alt+w
+#
+- insert:
+    - id: workspace-sidebar
+      name: '@local/dsh-tui-workspace-sidebar'
