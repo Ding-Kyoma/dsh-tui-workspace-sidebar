@@ -1,13 +1,15 @@
 /**
  * The sidebar panel itself.
  *
- * One line per conversation, grouped under its project. Only two things are
- * listed: what is running now, and what finished but has not been looked at.
- * Hover highlights, a click jumps (through the transition scene), and the
- * keyboard drives the same actions while the panel is focused.
+ * One line per conversation, grouped under its project: what is running now,
+ * what finished and was never read, and what finished recently enough to stay
+ * in reach (six hours by default). Hover highlights, a click jumps (through the
+ * transition scene), and the keyboard drives the same actions while the panel
+ * is focused. The attached conversation is always listed and is the default
+ * selection, so the highlight says where you are before you move it.
  */
 
-import { FRESH_FINISH_MS, RUNNING_FRAME_MS, RUNNING_FRAMES, formatWhen, glyphFor } from './model.js';
+import { FRESH_FINISH_MS, RUNNING_FRAME_MS, RUNNING_FRAMES, formatWhen, glyphFor, selectedRow } from './model.js';
 import { messagesFor, resolveLang } from './strings.js';
 
 /**
@@ -38,11 +40,14 @@ export function createPanel(options) {
     const [top, setTop] = React.useState(0);
 
     const rows = data.flatRows;
-    const selected = rows.find(row => row.id === selectedId) ?? rows[0];
+    // Default to the conversation on screen: the panel opens with the highlight
+    // where the person actually is, not on the first row of the list.
+    const selected = selectedRow(rows, selectedId, data.currentId);
     const selectedRef = React.useRef(undefined);
     selectedRef.current = selected?.id;
     const dataRef = React.useRef(data);
     dataRef.current = data;
+    const lastCurrent = React.useRef(data.currentId);
 
     const running = data.running > 0;
     const tick = ui.useAnimationTime(running ? RUNNING_FRAME_MS : 1000);
@@ -59,6 +64,14 @@ export function createPanel(options) {
     React.useEffect(() => {
       tracker.setCurrent(hostSnapshot.sessionId);
     }, [tracker, hostSnapshot.sessionId]);
+
+    // Following a jump (or any session switch) returns the highlight to the
+    // conversation now on screen. Keyboard navigation in between is untouched.
+    React.useEffect(() => {
+      if (lastCurrent.current === data.currentId) return;
+      lastCurrent.current = data.currentId;
+      setSelectedId(null);
+    }, [data.currentId]);
 
     React.useEffect(() => {
       tracker.setPanelVisible(visible);
@@ -183,7 +196,7 @@ export function createPanel(options) {
       const hovered = hoverId === `g:${group.key}`;
       const counts = [];
       if (group.running > 0) counts.push(`⠋${group.running}`);
-      if (group.unread > 0) counts.push(`✓${group.unread}`);
+      if (group.unread > 0) counts.push(`●${group.unread}`);
       return h(
         Box,
         {
@@ -229,7 +242,7 @@ export function createPanel(options) {
           },
         },
         h(Box, { width: 2, flexShrink: 0 }, h(Text, { color: focused && isSelected ? 'accent' : undefined }, focused && isSelected ? '❯' : ' ')),
-        h(Text, { color: glyph.color, bold: fresh || highlighted }, glyph.char),
+        h(Text, { color: glyph.color, bold: fresh || highlighted, dimColor: glyph.dim }, glyph.char),
         h(Text, null, ' '),
         h(
           Box,
@@ -251,7 +264,7 @@ export function createPanel(options) {
         Box,
         { flexGrow: 1, flexDirection: 'column', justifyContent: 'center', alignItems: 'center', paddingX: 1 },
         h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.emptyTitle),
-        h(Text, { dimColor: true, wrap: 'truncate-end' }, data.agentsAvailable ? strings.emptyHint : strings.liveUnavailable),
+        h(Text, { dimColor: true, wrap: 'truncate-end' }, data.agentsAvailable ? strings.emptyHint(config.retentionHours) : strings.liveUnavailable),
       )
       : h(
         Box,
@@ -273,7 +286,7 @@ export function createPanel(options) {
       Box,
       { flexDirection: 'column', flexGrow: 1, width: '100%', overflow: 'hidden' },
       showHeader
-        ? h(Box, { height: 1, flexShrink: 0 }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread)))
+        ? h(Box, { height: 1, flexShrink: 0 }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length)))
         : null,
       body,
       showFooter

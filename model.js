@@ -13,8 +13,14 @@ export const RUNNING_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', 
 /** Frame interval used by the chat's spinner. */
 export const RUNNING_FRAME_MS = 80;
 
-/** One finished entry older than this is pruned even when still unread. */
-export const MAX_FINISHED_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+/**
+ * How long a finished conversation stays in the inbox after its last activity.
+ *
+ * The row survives reading it: clicking a row no longer removes it, it settles
+ * into a dim checkmark and is swept once the window closes. The attached
+ * session is pinned regardless of age — it is where the person is looking.
+ */
+export const DEFAULT_RETENTION_MS = 6 * 60 * 60 * 1000;
 
 /** Finished-unread rows are highlighted for this long after they land. */
 export const FRESH_FINISH_MS = 4_000;
@@ -164,11 +170,62 @@ export function isUnread(row) {
 }
 
 /**
+ * Last moment anything happened in a row. The finish marker can be observed a
+ * moment after the final event, so the later of the two wins.
+ * @param {{updatedAt?: number, finishedAt?: number}} row
+ * @returns {number}
+ */
+export function activityAt(row) {
+  if (!row || typeof row !== 'object') return 0;
+  return Math.max(Number(row.updatedAt) || 0, Number(row.finishedAt) || 0);
+}
+
+/**
+ * @typedef {{currentId?: string, now?: number, retentionMs?: number}} ViewOptions
+ */
+
+/**
+ * @param {ViewOptions} [options]
+ * @returns {{currentId: string, now: number, retentionMs: number}}
+ */
+function viewOf(options = {}) {
+  return {
+    currentId: String(options.currentId ?? ''),
+    now: Number.isFinite(options.now) ? Number(options.now) : Date.now(),
+    retentionMs: Number.isFinite(options.retentionMs) ? Number(options.retentionMs) : DEFAULT_RETENTION_MS,
+  };
+}
+
+/**
+ * Whether a tracked row still belongs on screen.
+ *
+ * Running rows always do, and so does the attached session: it is what the
+ * person is looking at, and pinning it gives the panel's highlight a stable
+ * home. A finished row stays for the whole retention window — read or not —
+ * so a jump does not erase the conversation you just came from. A zero window
+ * restores the old rule: finished rows live only while unread.
+ *
+ * @param {any} row
+ * @param {ViewOptions} [options]
+ * @returns {boolean}
+ */
+export function isVisible(row, options = {}) {
+  if (!row || typeof row !== 'object') return false;
+  if (row.status === 'running') return true;
+  const view = viewOf(options);
+  if (view.currentId !== '' && String(row.id) === view.currentId) return true;
+  if (view.retentionMs <= 0) return isUnread(row);
+  return view.now - activityAt(row) <= view.retentionMs;
+}
+
+/**
  * The one transition table for a tracked row.
  *
  * `prev` is the row currently tracked (or undefined). The return value is the
- * next row, or undefined when the row should no longer exist. The caller keeps
- * rows that are `running` or finished-and-unread; anything else is dropped.
+ * next row, or undefined when there is nothing to track. A row that is the
+ * attached session is adopted even the first time it is seen, so the panel
+ * always has a highlight to land on; visibility over time is decided later by
+ * {@link isVisible} and {@link pruneRows}.
  *
  * @param {any} prev
  * @param {{
@@ -222,7 +279,23 @@ export function applyRowState(prev, input) {
     };
   }
 
-  if (prev === undefined) return undefined;
+  if (prev === undefined) {
+    if (!isCurrent) return undefined;
+    // The attached session is worth listing even when nothing is running: it
+    // is where the person is, and it is the row the panel highlights. It is
+    // adopted as read — nothing was missed while it was on screen.
+    const finishedAt = updatedAt > 0 ? updatedAt : (Number(input.now) || Date.now());
+    return {
+      id,
+      cwd,
+      title,
+      status: 'finished',
+      failed: Boolean(input.failed),
+      updatedAt: finishedAt,
+      finishedAt,
+      seenAt: finishedAt,
+    };
+  }
 
   const finishedAt = Number(prev.finishedAt) || 0;
   const next = {
@@ -240,29 +313,35 @@ export function applyRowState(prev, input) {
 }
 
 /**
- * Drop rows nobody can act on any more: finished-but-read entries are removed
- * elsewhere, so this only bounds the finished tail (oldest first).
+ * Sweep rows that have outlived their welcome.
+ *
+ * The retention window is the real rule: every finished row — read or unread —
+ * disappears once it has been idle for that long. The attached session is never
+ * swept while it is attached. The row cap remains as a hard bound for very
+ * long-running processes; when it bites, the least recently active finished
+ * rows go first.
  *
  * @param {Map<string, any>} rows mutated in place
  * @param {number} max
  * @param {number} now
+ * @param {ViewOptions} [options]
  * @returns {number} how many rows were removed
  */
-export function pruneRows(rows, max, now) {
+export function pruneRows(rows, max, now, options = {}) {
   if (!(rows instanceof Map)) return 0;
+  const view = viewOf({ ...options, now });
   let removed = 0;
   for (const [id, row] of rows) {
-    if (row?.status !== 'finished') continue;
-    if (Number(now) - Number(row.finishedAt) > MAX_FINISHED_AGE_MS) {
-      rows.delete(id);
-      removed += 1;
-    }
+    if (!row || row.status === 'running') continue;
+    if (isVisible(row, view)) continue;
+    rows.delete(id);
+    removed += 1;
   }
   const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : 300;
   if (rows.size <= limit) return removed;
   const finished = [...rows.entries()]
-    .filter(([, row]) => row?.status === 'finished')
-    .sort((left, right) => (Number(left[1].finishedAt) || 0) - (Number(right[1].finishedAt) || 0));
+    .filter(([id, row]) => row?.status === 'finished' && id !== view.currentId)
+    .sort((left, right) => activityAt(left[1]) - activityAt(right[1]));
   while (rows.size > limit && finished.length > 0) {
     const [id] = finished.shift();
     rows.delete(id);
@@ -272,33 +351,81 @@ export function pruneRows(rows, max, now) {
 }
 
 /**
+ * When the next row is due to be swept (epoch ms), or 0 when nothing is
+ * waiting. Running and attached rows never expire by themselves.
+ *
+ * @param {Map<string, any>} rows
+ * @param {number} retentionMs
+ * @param {string} currentId
+ * @returns {number}
+ */
+export function nextExpiry(rows, retentionMs, currentId) {
+  if (!(rows instanceof Map)) return 0;
+  const retention = Number.isFinite(retentionMs) ? Number(retentionMs) : DEFAULT_RETENTION_MS;
+  if (retention <= 0) return 0;
+  const current = String(currentId ?? '');
+  let earliest = 0;
+  for (const [id, row] of rows) {
+    if (!row || row.status === 'running') continue;
+    if (current !== '' && id === current) continue;
+    const at = activityAt(row) + retention;
+    if (earliest === 0 || at < earliest) earliest = at;
+  }
+  return earliest;
+}
+
+/**
  * @typedef {{id: string, cwd: string, title: string, status: string, failed: boolean, updatedAt: number, finishedAt: number, seenAt: number}} SidebarRow
  */
 
 /**
- * Rows the sidebar is allowed to show, in no particular order.
+ * Rows the sidebar is allowed to show: running, the attached session, and
+ * finished rows still inside the retention window. Order is left to the caller.
+ *
  * @param {readonly SidebarRow[]} rows
  * @param {string} currentId
+ * @param {ViewOptions} [options]
  * @returns {SidebarRow[]}
  */
-export function visibleRows(rows, currentId) {
-  const current = String(currentId ?? '');
+export function visibleRows(rows, currentId, options = {}) {
+  const view = viewOf({ ...options, currentId });
   const out = [];
   for (const row of rows) {
-    if (!row || typeof row !== 'object') continue;
-    if (current !== '' && String(row.id) === current) continue;
-    if (row.status === 'running' || isUnread(row)) out.push(row);
+    if (!isVisible(row, view)) continue;
+    out.push(row);
   }
   return out;
 }
 
 /**
- * Group visible rows by project and sort them the way a triage list wants:
- * anything running first, then the freshest unread conversation.
+ * Newest activity first — the same value the row prints on its right — with a
+ * running row winning a timestamp tie so a just-started conversation is not
+ * buried under a just-finished one.
+ * @param {SidebarRow} left
+ * @param {SidebarRow} right
+ * @returns {number}
+ */
+function compareByActivity(left, right) {
+  const leftAt = Number(left.updatedAt) || 0;
+  const rightAt = Number(right.updatedAt) || 0;
+  if (leftAt !== rightAt) return rightAt - leftAt;
+  const leftRunning = left.status === 'running' ? 0 : 1;
+  const rightRunning = right.status === 'running' ? 0 : 1;
+  if (leftRunning !== rightRunning) return leftRunning - rightRunning;
+  return String(left.id ?? '').localeCompare(String(right.id ?? ''));
+}
+
+/**
+ * Group visible rows by project, newest activity first inside each project.
+ * Projects themselves keep the old ordering: a project with something running
+ * leads, then by its freshest row.
+ *
+ * The attached session is listed too; it is simply never counted as unread.
  *
  * @param {readonly SidebarRow[]} rows
  * @param {readonly {path?: string, title?: string}[]} registry
  * @param {string} currentId
+ * @param {ViewOptions} [options]
  * @returns {{
  *   groups: {key: string, title: string, cwd: string, running: number, unread: number, rows: SidebarRow[]}[],
  *   running: number,
@@ -306,8 +433,9 @@ export function visibleRows(rows, currentId) {
  *   flatRows: SidebarRow[],
  * }}
  */
-export function buildGroups(rows, registry, currentId) {
-  const visible = visibleRows(rows, currentId);
+export function buildGroups(rows, registry, currentId, options = {}) {
+  const current = String(currentId ?? '');
+  const visible = visibleRows(rows, current, options);
   const titles = new Map();
   if (Array.isArray(registry)) {
     for (const entry of registry) {
@@ -333,17 +461,12 @@ export function buildGroups(rows, registry, currentId) {
   }
 
   const projects = [...buckets.values()].map(bucket => {
-    const list = [...bucket.rows].sort((left, right) => {
-      const leftRunning = left.status === 'running' ? 0 : 1;
-      const rightRunning = right.status === 'running' ? 0 : 1;
-      if (leftRunning !== rightRunning) return leftRunning - rightRunning;
-      return (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0);
-    });
+    const list = [...bucket.rows].sort(compareByActivity);
     let running = 0;
     let unread = 0;
     for (const row of list) {
       if (row.status === 'running') running += 1;
-      else if (isUnread(row)) unread += 1;
+      else if (isUnread(row) && String(row.id) !== current) unread += 1;
     }
     const title = titles.get(bucket.key) ?? basename(bucket.cwd) ?? '';
     return {
@@ -388,13 +511,55 @@ export function buildGroups(rows, registry, currentId) {
  * @param {number} frame
  * @returns {{char: string, color: string | undefined, dim: boolean}}
  */
+/**
+ * Which row the panel highlights.
+ *
+ * The explicit selection wins while the person is navigating; otherwise the
+ * attached conversation is chosen, and only when it is not listed at all does
+ * the list fall back to its first row. This is what makes the panel open with
+ * the highlight on the conversation actually on screen.
+ *
+ * @param {readonly SidebarRow[]} rows
+ * @param {string | null | undefined} selectedId
+ * @param {string | undefined} currentId
+ * @returns {SidebarRow | undefined}
+ */
+export function selectedRow(rows, selectedId, currentId) {
+  if (!Array.isArray(rows) || rows.length === 0) return undefined;
+  if (selectedId !== null && selectedId !== undefined && selectedId !== '') {
+    const explicit = rows.find(row => row?.id === selectedId);
+    if (explicit !== undefined) return explicit;
+  }
+  const current = String(currentId ?? '');
+  if (current !== '') {
+    const attached = rows.find(row => row?.id === current);
+    if (attached !== undefined) return attached;
+  }
+  return rows[0];
+}
+
+/**
+ * The inbox's glyph vocabulary, shared with the old full-screen inbox:
+ * the chat's own spinner while running; a solid dot for a finished turn nobody
+ * has looked at yet; the dimmed checkmark once it has been read; a cross for a
+ * failed turn (also dimmed once read).
+ *
+ * @param {SidebarRow} row
+ * @param {number} frame
+ * @returns {{char: string, color: string | undefined, dim: boolean}}
+ */
 export function glyphFor(row, frame) {
   if (row?.status === 'running') {
     const index = Number.isFinite(frame) ? Math.abs(Math.floor(frame)) % RUNNING_FRAMES.length : 0;
     return { char: RUNNING_FRAMES[index], color: 'suggestion', dim: false };
   }
+  if (!isUnread(row)) {
+    return row?.failed
+      ? { char: '✕', color: 'error', dim: true }
+      : { char: '✓', color: 'success', dim: true };
+  }
   if (row?.failed) return { char: '✕', color: 'error', dim: false };
-  return { char: '✓', color: 'success', dim: false };
+  return { char: '●', color: 'success', dim: false };
 }
 
 /**

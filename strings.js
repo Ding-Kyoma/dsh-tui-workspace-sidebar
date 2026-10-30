@@ -14,21 +14,26 @@ import { join } from 'node:path';
 const ZH = {
   lang: 'zh',
   title: '收件箱',
-  commandDescription: '打开收件箱侧栏（正在运行 / 跑完未读）',
+  commandDescription: '打开收件箱侧栏（正在运行 / 近期会话）',
   shortcutDescription: '打开收件箱侧栏',
   sceneTitle: '收件箱跳转',
   untitled: '未命名会话',
   unknownProject: '未知项目',
-  emptyTitle: '没有正在运行或未读的会话',
-  emptyHint: '后台会话跑完会出现在这里',
-  liveUnavailable: '当前内核不提供实时会话状态，只显示未读记录',
+  emptyTitle: '收件箱是空的',
+  emptyHint(hours) {
+    const value = Number(hours);
+    if (!(value > 0)) return '读过的会话会立即移除';
+    return `最近 ${value} 小时活跃过的会话会显示在这里`;
+  },
+  liveUnavailable: '当前内核不提供实时会话状态，只显示磁盘上的记录',
   hintFocused: '↑↓ 选择 · Enter 跳转 · m 已读 · r 刷新',
   hintIdle: 'Ctrl+B 聚焦 · 点击行跳转',
-  header(running, unread) {
+  header(running, unread, total) {
     const parts = [];
     if (running > 0) parts.push(`⠋ ${running} 运行`);
-    if (unread > 0) parts.push(`✓ ${unread} 未读`);
-    return parts.length > 0 ? parts.join(' · ') : '暂无运行或未读';
+    if (unread > 0) parts.push(`● ${unread} 未读`);
+    if (parts.length > 0) return parts.join(' · ');
+    return total > 0 ? `共 ${total} 个会话` : '暂无会话';
   },
   opening: '正在打开会话…',
   alreadyHere: '已经在这个会话里了',
@@ -47,21 +52,26 @@ const ZH = {
 const EN = {
   lang: 'en',
   title: 'Inbox',
-  commandDescription: 'Open the inbox panel (running / finished-unread)',
+  commandDescription: 'Open the inbox panel (running / recent conversations)',
   shortcutDescription: 'Open the inbox panel',
   sceneTitle: 'Inbox jump',
   untitled: 'Untitled session',
   unknownProject: 'Unknown project',
-  emptyTitle: 'Nothing is running or unread',
-  emptyHint: 'Finished background sessions land here',
-  liveUnavailable: 'This kernel exposes no live session status; showing unread records only',
+  emptyTitle: 'The inbox is empty',
+  emptyHint(hours) {
+    const value = Number(hours);
+    if (!(value > 0)) return 'Read conversations are removed immediately';
+    return `Conversations active in the last ${value}h show up here`;
+  },
+  liveUnavailable: 'This kernel exposes no live session status; showing persisted records only',
   hintFocused: '↑↓ select · Enter jump · m read · r refresh',
   hintIdle: 'Ctrl+B to focus · click a row to jump',
-  header(running, unread) {
+  header(running, unread, total) {
     const parts = [];
     if (running > 0) parts.push(`⠋ ${running} running`);
-    if (unread > 0) parts.push(`✓ ${unread} unread`);
-    return parts.length > 0 ? parts.join(' · ') : 'nothing running or unread';
+    if (unread > 0) parts.push(`● ${unread} unread`);
+    if (parts.length > 0) return parts.join(' · ');
+    return total > 0 ? `${total} conversation${total === 1 ? '' : 's'}` : 'nothing here yet';
   },
   opening: 'Opening session…',
   alreadyHere: 'You are already in this session',

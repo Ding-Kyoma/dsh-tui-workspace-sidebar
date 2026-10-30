@@ -2,10 +2,10 @@
  * Durable state for the workspace sidebar.
  *
  * The sidebar is a triage surface, not a second session store: it remembers
- * only the conversations that are running or finished-but-unread, plus the
- * title/cwd needed to render them after a restart. Writes are debounced and
- * atomic; a corrupt file is preserved next to the original instead of being
- * silently overwritten.
+ * only the conversations still inside the retention window (running, unread,
+ * and recently read ones), plus the title/cwd needed to render them after a
+ * restart. Writes are debounced and atomic; a corrupt file is preserved next to
+ * the original instead of being silently overwritten.
  */
 
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';

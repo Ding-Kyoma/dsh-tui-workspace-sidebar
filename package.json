@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Sidebar panel for dsh-tui: running and finished-but-unread conversations grouped by workspace",
+  "description": "Sidebar panel for dsh-tui: running and recent conversations grouped by workspace",
   "exports": {
     ".": "./index.js",
     "./model": "./model.js",

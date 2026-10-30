@@ -1,38 +1,48 @@
 # dsh-tui-workspace-sidebar
 
 A light right-side panel for dsh-tui that answers one question at a glance:
-**which conversations are running, and which finished while I was not looking?**
+**what is running, what finished while I was not looking, and where am I?**
 
 It replaces the full-screen `dsh-tui-workspace-inbox` approach with a normal
 side-panel tab: grouped by project, one line per conversation, hover to
 highlight, click to jump.
 
 ```
-⠋ 2 运行 · ✓ 1 未读
+⠋ 1 运行 · ● 1 未读
 ▾ dsh-plugins
-❯⠋ 修复登录页样式            刚刚
- ✓ 给补丁跑个验证            3 分钟前
+❯ ✓ 修复登录页样式            刚刚
+  ⠋ 给补丁跑个验证            2 分钟前
+  ● 重写 README               5 分钟前
 ▾ other-project
- ✓ 重写 README               1 小时前
+  ✓ 更新部署脚本              3 小时前
 ↑↓ 选择 · Enter 跳转 · m 已读 · r 刷新
 ```
 
 ## What it shows
 
-Only two kinds of conversations, across every workspace that is live in this
-TUI process:
+Three kinds of conversations, across every workspace that is live in this TUI
+process:
 
 - **Running** — the session's agent is inside a turn. The braille spinner is
   the chat's own spinner, frame for frame (80 ms).
-- **Finished but unread** — a turn ended while you were in another session.
-  The row shows `✓` (`✕` when the turn failed) and is bold for the first few
-  seconds.
+- **Finished but unread** — a turn ended while you were in another session. The
+  row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
+  first few seconds.
+- **Finished and already read** — jumping to a conversation (or pressing `m`)
+  no longer removes it; the dot becomes a dim `✓` and the row stays for the
+  rest of the retention window, so the place you just came from is still there.
 
-Everything else is hidden: finished-and-read conversations, idle sessions that
-never ran, subagents, and projects with nothing to triage.
+A finished conversation — read or unread — is swept once it has been idle for
+**6 hours** (`retentionHours`, configurable). The attached conversation is
+always listed and is the default selection, highlighted as soon as the panel
+opens; it is pinned regardless of age while you are in it.
 
-The current session is never listed (you are already looking at it) and never
-counted as unread.
+Inside a project, rows are ordered by their last activity — the relative time
+printed on the right: newest first, with a running row winning a timestamp tie.
+
+Everything else is hidden: idle sessions that never ran, subagents, and
+projects with nothing to triage. The attached session is never counted as
+unread (no badge for the conversation already on screen).
 
 ## Install
 
@@ -60,7 +70,11 @@ replaces the whole `config`, so restate every key you need):
     lang: auto                                  # auto | zh | en
     stateFile: ~/.dsh-tui/workspace-sidebar.json
     shortcut: alt+w                             # off disables it
+    retentionHours: 6                           # 0 = drop a row as soon as it is read
 ```
+
+`retentionHours` accepts fractions (useful to watch the sweep happen) and is
+capped at 720 (30 days). The row cap of 300 stays as a hard bound.
 
 ## Interaction
 
@@ -70,7 +84,7 @@ replaces the whole `config`, so restate every key you need):
 | click a row | jump to that workspace + session |
 | `↑` / `↓` | move the selection (while the panel is focused) |
 | `Enter` | jump to the selected conversation |
-| `m` | mark the selected finished row as read |
+| `m` | mark the selected finished row as read (the row stays, dimmed) |
 | `r` | refresh the agent roster and workspace titles |
 | wheel | scroll the list |
 
@@ -96,6 +110,8 @@ workspace list there.
 Failure reasons are mapped to toasts and the row stays unread: `occupied`
 (another TUI terminal holds the session, with its pid), `working`,
 `cancelled`, `failed`, `unavailable` (the adapter already toasts this one).
+A successful jump marks the row read but keeps it in the list, so the
+conversation you came from is still one click away until its window closes.
 
 ## Persistence
 
@@ -121,9 +137,12 @@ rename, debounced writes):
 
 A row persisted as `running` is dropped on the next start: the previous
 process died mid-turn, so there is nothing this process can report about it.
-Finished-unread rows survive restarts with their titles, and rows older than
-14 days (or beyond the 300-row cap) are pruned. A corrupt file is preserved as
-`workspace-sidebar.json.corrupt-<epoch>` before an empty state is used.
+Finished rows survive restarts with their titles and read state — read ones
+included, until their retention window closes. Rows past `retentionHours` (or
+beyond the 300-row cap) are pruned, and a hidden panel still sweeps them on
+time through one unref'd timer, so the tab badge shrinks without being opened.
+A corrupt file is preserved as `workspace-sidebar.json.corrupt-<epoch>` before
+an empty state is used.
 
 ## Limitations
 
@@ -140,8 +159,11 @@ Finished-unread rows survive restarts with their titles, and rows older than
   session switch in 0.17.0. If a direct `host.openSession`-style API appears,
   the panel will prefer it and keep the scene as a fallback.
 - **Non-DSH kernels.** A kernel that does not provide the `agents` service
-  (for example the Claude/Codex adapters) gets unread rows from disk only; the
+  (for example the Claude/Codex adapters) gets recent rows from disk only; the
   panel says so instead of pretending to be live.
+- **Pinned current row.** The attached conversation is never swept while it is
+  attached, even after a long idle stretch. Switch away and it expires with the
+  rest at the next sweep.
 - **One lifecycle.** Do not install two copies under different names: the
   second activation cannot register the same panel/scene ids.
 
@@ -159,6 +181,8 @@ npm test        # node --test: model, tracker, store, discovery, jump, apply
 ```
 
 The tests cover the transition table (`running → finished → seen`), the
-current-session rule, subagent/no-prompt filtering, grouping and pruning,
-store atomicity/corruption, the jump failure matrix, and the panel/scene/
-command/shortcut registration (including feature-detected degradation).
+retention window (visibility, pruning, next-expiry), the current-session rule
+(listed, pinned, never unread), activity ordering, subagent/no-prompt
+filtering, grouping, store atomicity/corruption, the jump failure matrix, and
+the panel/scene/command/shortcut registration (including feature-detected
+degradation).

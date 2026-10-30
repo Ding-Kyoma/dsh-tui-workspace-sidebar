@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PANEL_ICON, PANEL_ORDER, PANEL_SUB_ID, apply } from '../index.js';
+import { DEFAULT_RETENTION_HOURS, PANEL_ICON, PANEL_ORDER, PANEL_SUB_ID, apply, normalizeConfig } from '../index.js';
 import { JUMP_SCENE_ID } from '../jump.js';
 
 async function makeHarness({ withPanels = true } = {}) {
@@ -93,6 +93,16 @@ async function makeHarness({ withPanels = true } = {}) {
 
   return { ctx, stateFile, registered, opened, badges, scenes, commands, shortcuts };
 }
+
+test('normalizeConfig: retentionHours defaults, accepts fractions, zero, and clamps', () => {
+  assert.equal(DEFAULT_RETENTION_HOURS, 6);
+  assert.equal(normalizeConfig({}).retentionHours, 6);
+  assert.equal(normalizeConfig({ retentionHours: 0 }).retentionHours, 0);
+  assert.equal(normalizeConfig({ retentionHours: 0.001 }).retentionHours, 0.001);
+  assert.equal(normalizeConfig({ retentionHours: -1 }).retentionHours, 6);
+  assert.equal(normalizeConfig({ retentionHours: 'abc' }).retentionHours, 6);
+  assert.equal(normalizeConfig({ retentionHours: 10_000 }).retentionHours, 720);
+});
 
 test('apply registers a valid panel, the jump scene, /ws and the shortcut', async () => {
   const harness = await makeHarness();

@@ -14,6 +14,7 @@
 #       lang: zh
 #       stateFile: ~/.dsh-tui/workspace-sidebar.json
 #       shortcut: alt+w
+#       retentionHours: 6   # finished rows linger this long after last activity; 0 = drop once read
 #
 - insert:
     - id: workspace-sidebar

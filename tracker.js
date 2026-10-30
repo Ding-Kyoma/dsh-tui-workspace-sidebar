@@ -3,7 +3,10 @@
  *
  * One tracker per plugin activation. It folds the core agent registry (and its
  * `agent/created|status|disposed` events) into the tiny row set the panel
- * shows: conversations that are running now, or finished and not yet read.
+ * shows: conversations that are running now, or that finished recently enough
+ * to still be worth a glance (the retention window, six hours by default).
+ * Reading a row does not remove it; it settles into the dim "seen" state and
+ * is swept when the window closes.
  *
  * No session files are read. A live agent carries its own session object with
  * the full event log in memory, which is exactly the projection `/resume`
@@ -12,11 +15,14 @@
  */
 
 import {
+  DEFAULT_RETENTION_MS,
   applyRowState,
   buildGroups,
   emptyFold,
   foldAgentEvents,
   isUnread,
+  isVisible,
+  nextExpiry,
   normalizeCwd,
   pruneRows,
 } from './model.js';
@@ -109,6 +115,7 @@ function sameRow(left, right) {
  *   now?: () => number,
  *   probe?: () => string | undefined,
  *   maxRows?: number,
+ *   retentionMs?: number,
  * }} options
  */
 export function createTracker(options) {
@@ -117,6 +124,9 @@ export function createTracker(options) {
   const clock = typeof options.now === 'function' ? options.now : Date.now;
   const probe = typeof options.probe === 'function' ? options.probe : undefined;
   const maxRows = Number.isFinite(options.maxRows) && options.maxRows > 0 ? Math.floor(options.maxRows) : 300;
+  const retentionMs = Number.isFinite(options.retentionMs) && options.retentionMs >= 0
+    ? Number(options.retentionMs)
+    : DEFAULT_RETENTION_MS;
 
   /** @type {Map<string, any>} */
   const rows = new Map();
@@ -134,6 +144,9 @@ export function createTracker(options) {
   let lastBadge = 'init';
   let disposed = false;
   let loading;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let expiryTimer;
+  let expiryAt = 0;
   const listeners = new Set();
   const disposers = [];
 
@@ -148,6 +161,33 @@ export function createTracker(options) {
       }
     }
     updateBadge();
+    scheduleExpiry();
+  }
+
+  /**
+   * The panel refreshes once a second while it is visible, but a hidden panel
+   * must still drop expired rows and shrink the badge on time. One unref'd
+   * timer points at the next expiry instead of polling.
+   */
+  function scheduleExpiry() {
+    if (disposed) return;
+    const at = nextExpiry(rows, retentionMs, currentId);
+    if (at === expiryAt) return;
+    expiryAt = at;
+    if (expiryTimer !== undefined) {
+      clearTimeout(expiryTimer);
+      expiryTimer = undefined;
+    }
+    if (at === 0) return;
+    // +1 ms so the sweep runs strictly after the window closes; firing exactly
+    // on the boundary would leave the row visible and nothing to re-arm.
+    const delay = Math.max(50, Math.min(at - clock() + 1, 2_147_483_647));
+    expiryTimer = setTimeout(() => {
+      expiryTimer = undefined;
+      expiryAt = 0;
+      reconcile();
+    }, delay);
+    expiryTimer.unref?.();
   }
 
   function persist() {
@@ -237,6 +277,7 @@ export function createTracker(options) {
     }
     const cwd = typeof header.cwd === 'string' && header.cwd !== '' ? header.cwd : (prev?.cwd ?? '');
     const title = fold.title || fold.prompt || prev?.title || '';
+    const now = clock();
     const next = applyRowState(prev, {
       id,
       cwd,
@@ -245,10 +286,12 @@ export function createTracker(options) {
       failed: fold.failed,
       updatedAt: fold.updatedAt,
       currentId,
-      now: clock(),
+      now,
     });
     if (next === undefined) return false;
-    if (next.status !== 'running' && !isUnread(next)) {
+    if (!isVisible(next, { currentId, now, retentionMs })) {
+      // Outlived the retention window, or a zero window that only keeps unread
+      // rows. A never-tracked unseen row is simply ignored.
       if (prev === undefined) return false;
       rows.delete(id);
       return true;
@@ -263,14 +306,13 @@ export function createTracker(options) {
     if (next === currentId) return false;
     currentId = next;
     let changed = false;
-    if (currentId !== '') {
-      for (const [id, row] of [...rows]) {
-        if (id !== currentId) continue;
-        if (row.status === 'finished') {
-          rows.delete(id);
-          changed = true;
-        }
-      }
+    const row = currentId === '' ? undefined : rows.get(currentId);
+    if (row && row.status === 'finished' && isUnread(row)) {
+      // Arriving at a conversation is reading it. The row stays — there is no
+      // reason to erase the place you just came from — and simply loses its
+      // unread dot for the rest of the retention window.
+      row.seenAt = Math.max(Number(row.finishedAt) || 0, clock());
+      changed = true;
     }
     if (changed) persist();
     bump();
@@ -307,9 +349,12 @@ export function createTracker(options) {
       if (upsertAgent(agent, undefined)) changed = true;
     }
 
+    const now = clock();
     for (const [id, row] of [...rows]) {
       if (liveIds.has(id)) continue;
       if (row.status === 'running') {
+        // The agent is gone; the turn it was in can never be reported on now,
+        // so it settles as finished with the usual read/unread rule.
         const next = applyRowState(row, {
           id,
           cwd: row.cwd,
@@ -318,16 +363,14 @@ export function createTracker(options) {
           failed: row.failed,
           updatedAt: row.updatedAt,
           currentId,
-          now: clock(),
+          now,
         });
-        if (next !== undefined && isUnread(next)) rows.set(id, next);
+        if (next !== undefined) rows.set(id, next);
         else rows.delete(id);
-        changed = true;
-      } else if (!isUnread(row)) {
-        rows.delete(id);
         changed = true;
       }
     }
+    if (pruneRows(rows, maxRows, now, { currentId, retentionMs }) > 0) changed = true;
 
     if (changed) {
       persist();
@@ -362,6 +405,7 @@ export function createTracker(options) {
     folds.delete(id);
     const row = rows.get(id);
     if (row === undefined || row.status !== 'running') return;
+    const now = clock();
     const next = applyRowState(row, {
       id,
       cwd: row.cwd,
@@ -370,9 +414,9 @@ export function createTracker(options) {
       failed: row.failed,
       updatedAt: row.updatedAt,
       currentId,
-      now: clock(),
+      now,
     });
-    if (next !== undefined && isUnread(next)) rows.set(id, next);
+    if (next !== undefined && isVisible(next, { currentId, now, retentionMs })) rows.set(id, next);
     else rows.delete(id);
     persist();
     bump();
@@ -426,16 +470,25 @@ export function createTracker(options) {
         warn('loading state failed', error, logger);
       }
       const persisted = store.snapshot?.()?.sessions ?? {};
+      const now = clock();
       for (const [id, row] of Object.entries(persisted)) {
         if (!row || typeof row !== 'object') continue;
         // A row persisted as running was interrupted by the last shutdown; it
         // is history now, not an unfinished task this process can report on.
         if (row.status !== 'finished') continue;
-        if (!isUnread(row)) continue;
+        // Read rows are restored too: "finished six hours ago" is exactly the
+        // half-day of context this list is meant to keep.
+        if (!isVisible(row, { currentId, now, retentionMs })) continue;
         if (rows.has(id)) continue;
         rows.set(id, { ...row });
       }
-      pruneRows(rows, maxRows, clock());
+      // The attached session may have been persisted as unread by an earlier
+      // process; arriving in it is reading it, exactly as setCurrent() does.
+      const attached = currentId === '' ? undefined : rows.get(currentId);
+      if (attached && attached.status === 'finished' && isUnread(attached)) {
+        attached.seenAt = Math.max(Number(attached.finishedAt) || 0, now);
+      }
+      pruneRows(rows, maxRows, now, { currentId, retentionMs });
       // First write after load: capture live rows seeded by attach() and drop
       // persisted rows that are no longer actionable.
       persist();
@@ -498,14 +551,20 @@ export function createTracker(options) {
     const rowId = typeof id === 'string' ? id : '';
     const row = rows.get(rowId);
     if (row === undefined) return false;
+    const now = clock();
     if (row.status === 'running') {
-      const now = clock();
       if (row.seenAt === now) return false;
       row.seenAt = now;
       persist();
+      bump();
       return true;
     }
-    rows.delete(rowId);
+    const nextSeen = Math.max(Number(row.finishedAt) || 0, now);
+    if (nextSeen === row.seenAt) return false;
+    // Reading a finished row settles it as read but keeps it: the conversation
+    // you just jumped to, or deliberately marked, remains visible until its
+    // retention window closes.
+    row.seenAt = nextSeen;
     persist();
     bump();
     return true;
@@ -527,7 +586,10 @@ export function createTracker(options) {
 
   function getSnapshot() {
     if (snapshot === undefined) {
-      const groups = buildGroups([...rows.values()], registry, currentId);
+      const groups = buildGroups([...rows.values()], registry, currentId, {
+        now: clock(),
+        retentionMs,
+      });
       snapshot = {
         ...groups,
         currentId,
@@ -553,6 +615,11 @@ export function createTracker(options) {
   function dispose() {
     if (disposed) return;
     disposed = true;
+    if (expiryTimer !== undefined) {
+      clearTimeout(expiryTimer);
+      expiryTimer = undefined;
+    }
+    expiryAt = 0;
     listeners.clear();
     for (const off of disposers.splice(0)) {
       try {

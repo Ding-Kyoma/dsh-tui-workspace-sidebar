@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_RETENTION_MS,
   RUNNING_FRAMES,
+  activityAt,
   applyRowState,
   basename,
   buildGroups,
@@ -10,11 +12,16 @@ import {
   formatWhen,
   glyphFor,
   isUnread,
+  isVisible,
+  nextExpiry,
   normalizeCwd,
   oneLine,
   pruneRows,
+  selectedRow,
   windowTop,
 } from '../model.js';
+
+const HOUR = 60 * 60 * 1000;
 
 function row(overrides = {}) {
   return {
@@ -73,6 +80,22 @@ test('applyRowState: idle agents never seen running are ignored', () => {
   assert.equal(applyRowState(undefined, { id: 'a', cwd: '/r', title: '', running: false, updatedAt: 0, currentId: '', now: 5 }), undefined);
 });
 
+test('applyRowState: the attached session is adopted as a read row', () => {
+  const adopted = applyRowState(undefined, {
+    id: 'a',
+    cwd: '/r',
+    title: 't',
+    running: false,
+    updatedAt: 900,
+    currentId: 'a',
+    now: 1_000,
+  });
+  assert.equal(adopted.status, 'finished');
+  assert.equal(adopted.finishedAt, 900);
+  assert.equal(isUnread(adopted), false);
+  assert.equal(adopted.updatedAt, 900);
+});
+
 test('applyRowState: running -> idle becomes unread; a current session settles as read', () => {
   const running = applyRowState(undefined, { id: 'a', cwd: '/r', title: 't', running: true, updatedAt: 10, currentId: '', now: 10 });
   assert.equal(running.status, 'running');
@@ -108,53 +131,122 @@ test('applyRowState: a new turn resets the finish marker and can be unread again
   assert.equal(again.failed, true);
 });
 
-test('buildGroups: filters, groups, sorts, and hides the current session', () => {
+test('buildGroups: lists the current conversation and recent read rows, newest activity first', () => {
   const registry = [{ path: '/repo/app/', title: 'App' }];
   const rows = [
     row({ id: 'run', status: 'running', finishedAt: 0, updatedAt: 300, title: 'Running', cwd: '/repo/app' }),
     row({ id: 'unread-old', finishedAt: 100, updatedAt: 100, title: 'Old', cwd: '/repo/app' }),
     row({ id: 'unread-new', finishedAt: 200, updatedAt: 200, title: 'New', cwd: '/repo/other' }),
     row({ id: 'read', finishedAt: 50, updatedAt: 50, seenAt: 60, title: 'Read', cwd: '/repo/app' }),
-    row({ id: 'current', finishedAt: 400, updatedAt: 400, title: 'Current', cwd: '/repo/app' }),
+    row({ id: 'current', finishedAt: 400, updatedAt: 400, seenAt: 400, title: 'Current', cwd: '/repo/app' }),
   ];
-  const result = buildGroups(rows, registry, 'current');
+  const result = buildGroups(rows, registry, 'current', { now: 1_000 });
   assert.equal(result.running, 1);
+  // The attached session is visible but never counted as unread.
   assert.equal(result.unread, 2);
   assert.deepEqual(result.groups.map(group => group.title), ['App', 'other']);
-  assert.deepEqual(result.groups[0].rows.map(item => item.id), ['run', 'unread-old']);
-  assert.deepEqual(result.flatRows.map(item => item.id), ['run', 'unread-old', 'unread-new']);
+  assert.deepEqual(result.groups[0].rows.map(item => item.id), ['current', 'run', 'unread-old', 'read']);
+  assert.deepEqual(result.flatRows.map(item => item.id), ['current', 'run', 'unread-old', 'read', 'unread-new']);
 });
 
 test('buildGroups: falls back to basename and keeps unknown directories together', () => {
   const result = buildGroups([
     row({ id: 'a', cwd: '', finishedAt: 100 }),
     row({ id: 'b', cwd: '/x/y', finishedAt: 90 }),
-  ], [], '');
+  ], [], '', { now: 1_000 });
   assert.equal(result.groups.length, 2);
   assert.deepEqual(new Set(result.groups.map(group => group.title)), new Set(['', 'y']));
 });
 
-test('pruneRows: drops old finished rows and respects the cap', () => {
-  const day = 24 * 60 * 60 * 1000;
-  const now = 30 * day;
-  const rows = new Map();
-  rows.set('old', row({ id: 'old', finishedAt: now - 20 * day }));
-  rows.set('a', row({ id: 'a', finishedAt: now - 2 * day }));
-  rows.set('b', row({ id: 'b', finishedAt: now - day }));
-  rows.set('live', row({ id: 'live', status: 'running', finishedAt: 0 }));
-  pruneRows(rows, 3, now);
-  assert.equal(rows.has('old'), false);
-  assert.equal(rows.has('live'), true);
-  assert.equal(rows.size, 3);
-  pruneRows(rows, 2, now);
-  assert.equal(rows.size, 2);
-  assert.equal(rows.has('a'), false);
+test('isVisible: running and attached rows stay, finished rows follow the retention window', () => {
+  const now = 10 * HOUR;
+  assert.equal(isVisible(row({ status: 'running', finishedAt: 0, updatedAt: now }), { now }), true);
+  assert.equal(isVisible(row({ id: 'a', updatedAt: now - HOUR, finishedAt: now - HOUR }), { now }), true);
+  assert.equal(isVisible(row({ id: 'a', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR }), { now }), false);
+  assert.equal(
+    isVisible(row({ id: 'a', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR }), { now, currentId: 'a' }),
+    true,
+    'the attached session is pinned even past the window',
+  );
+  // A zero window restores the old rule: only unread rows survive.
+  assert.equal(isVisible(row({ id: 'a', updatedAt: now - HOUR, finishedAt: now - HOUR, seenAt: now }), { now, retentionMs: 0 }), false);
+  assert.equal(isVisible(row({ id: 'a', updatedAt: now - HOUR, finishedAt: now - HOUR }), { now, retentionMs: 0 }), true);
 });
 
-test('glyphFor: spinner for running, check for unread, cross for failed', () => {
+test('buildGroups: hides expired rows, keeps the current one, and honours a zero window', () => {
+  const now = 10 * HOUR;
+  const rows = [
+    row({ id: 'old-read', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR, seenAt: now - 7 * HOUR }),
+    row({ id: 'old-unread', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR }),
+    row({ id: 'recent', updatedAt: now - HOUR, finishedAt: now - HOUR, seenAt: now - HOUR }),
+    row({ id: 'current', updatedAt: now - 30 * HOUR, finishedAt: now - 30 * HOUR, seenAt: now - 30 * HOUR }),
+  ];
+  const kept = buildGroups(rows, [], 'current', { now });
+  assert.deepEqual(kept.flatRows.map(item => item.id), ['recent', 'current']);
+  assert.equal(kept.unread, 0);
+
+  const legacy = buildGroups(rows, [], '', { now, retentionMs: 0 });
+  assert.deepEqual(legacy.flatRows.map(item => item.id), ['old-unread']);
+});
+
+test('activityAt: the later of the last event and the finish marker', () => {
+  assert.equal(activityAt(row({ updatedAt: 100, finishedAt: 200 })), 200);
+  assert.equal(activityAt(row({ updatedAt: 300, finishedAt: 200 })), 300);
+  assert.equal(activityAt(undefined), 0);
+});
+
+test('pruneRows: sweeps expired rows, pins the attached one, and respects the cap', () => {
+  const now = 30 * HOUR;
+  const rows = new Map();
+  rows.set('expired', row({ id: 'expired', updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR, seenAt: now - 6 * HOUR }));
+  rows.set('read', row({ id: 'read', updatedAt: now - HOUR, finishedAt: now - HOUR, seenAt: now - HOUR }));
+  rows.set('current', row({ id: 'current', updatedAt: now - 10 * HOUR, finishedAt: now - 10 * HOUR, seenAt: now - 10 * HOUR }));
+  rows.set('live', row({ id: 'live', status: 'running', finishedAt: 0, updatedAt: now }));
+  pruneRows(rows, 10, now, { currentId: 'current' });
+  assert.equal(rows.has('expired'), false);
+  assert.equal(rows.has('read'), true);
+  assert.equal(rows.has('current'), true);
+  assert.equal(rows.has('live'), true);
+
+  const capped = new Map();
+  capped.set('a', row({ id: 'a', updatedAt: now - 5 * HOUR, finishedAt: now - 5 * HOUR }));
+  capped.set('b', row({ id: 'b', updatedAt: now - 4 * HOUR, finishedAt: now - 4 * HOUR }));
+  capped.set('current', row({ id: 'current', updatedAt: now - 9 * HOUR, finishedAt: now - 9 * HOUR }));
+  pruneRows(capped, 2, now, { currentId: 'current' });
+  assert.equal(capped.has('a'), false);
+  assert.equal(capped.has('b'), true);
+  assert.equal(capped.has('current'), true);
+  assert.equal(capped.size, 2);
+});
+
+test('nextExpiry: the earliest retained finish, ignoring running and attached rows', () => {
+  const now = 100 * HOUR;
+  const rows = new Map([
+    ['run', row({ id: 'run', status: 'running', finishedAt: 0, updatedAt: now })],
+    ['current', row({ id: 'current', updatedAt: now - 5 * HOUR, finishedAt: now - 5 * HOUR })],
+    ['fresh', row({ id: 'fresh', updatedAt: now - HOUR, finishedAt: now - HOUR })],
+    ['older', row({ id: 'older', updatedAt: now - 2 * HOUR, finishedAt: now - 2 * HOUR })],
+  ]);
+  // The least recently active row is the first to expire.
+  assert.equal(nextExpiry(rows, DEFAULT_RETENTION_MS, 'current'), now - 2 * HOUR + DEFAULT_RETENTION_MS);
+  assert.equal(nextExpiry(new Map(), DEFAULT_RETENTION_MS, ''), 0);
+});
+
+test('selectedRow: explicit choice, then the attached conversation, then the first row', () => {
+  const rows = [row({ id: 'a' }), row({ id: 'b' }), row({ id: 'c' })];
+  assert.equal(selectedRow(rows, 'b', 'c').id, 'b');
+  assert.equal(selectedRow(rows, null, 'c').id, 'c');
+  assert.equal(selectedRow(rows, 'gone', 'c').id, 'c');
+  assert.equal(selectedRow(rows, 'gone', '').id, 'a');
+  assert.equal(selectedRow([], null, 'a'), undefined);
+});
+
+test('glyphFor: spinner for running, dot for unread, dim check once read, cross for failure', () => {
   assert.equal(glyphFor(row({ status: 'running' }), 3).char, RUNNING_FRAMES[3]);
-  assert.equal(glyphFor(row(), 0).char, '✓');
-  assert.equal(glyphFor(row({ failed: true }), 0).char, '✕');
+  assert.deepEqual(glyphFor(row(), 0), { char: '●', color: 'success', dim: false });
+  assert.deepEqual(glyphFor(row({ seenAt: 2_000 }), 0), { char: '✓', color: 'success', dim: true });
+  assert.deepEqual(glyphFor(row({ failed: true }), 0), { char: '✕', color: 'error', dim: false });
+  assert.deepEqual(glyphFor(row({ failed: true, seenAt: 2_000 }), 0), { char: '✕', color: 'error', dim: true });
 });
 
 test('formatWhen: relative labels and a clock-safe fallback', () => {

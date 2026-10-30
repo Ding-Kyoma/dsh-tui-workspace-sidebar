@@ -1,6 +1,7 @@
 /**
  * Workspace sidebar — a lightweight right-side panel listing the conversations
- * that are running now or finished but not yet read, grouped by project.
+ * that are running now, finished unread, or finished recently enough to stay in
+ * reach (six hours idle by default), grouped by project.
  *
  * Design notes that explain the shape of this file:
  *
@@ -29,6 +30,10 @@ export const PANEL_SUB_ID = 'inbox';
 export const PANEL_ICON = '▣';
 export const PANEL_ORDER = 10;
 export const DEFAULT_SHORTCUT = 'alt+w';
+/** Finished conversations linger this long after their last activity. */
+export const DEFAULT_RETENTION_HOURS = 6;
+/** A month is plenty; the 300-row cap bounds memory long before that. */
+const MAX_RETENTION_HOURS = 720;
 
 /**
  * @param {unknown} error
@@ -39,16 +44,23 @@ function messageOf(error) {
 }
 
 /**
- * @param {{lang?: unknown, stateFile?: unknown, shortcut?: unknown}} [config]
+ * @param {{lang?: unknown, stateFile?: unknown, shortcut?: unknown, retentionHours?: unknown}} [config]
  */
-function normalizeConfig(config) {
+export function normalizeConfig(config) {
   const source = config && typeof config === 'object' ? config : {};
   const lang = source.lang === 'zh' || source.lang === 'en' ? source.lang : 'auto';
   const stateFile = typeof source.stateFile === 'string' && source.stateFile.trim() !== ''
     ? source.stateFile.trim()
     : DEFAULT_STATE_FILE;
   const shortcut = typeof source.shortcut === 'string' ? source.shortcut.trim() : DEFAULT_SHORTCUT;
-  return { lang, stateFile, shortcut };
+  const hours = Number(source.retentionHours);
+  // `0` is meaningful (old behaviour: drop a conversation as soon as it is
+  // read); fractions are accepted so the window can be exercised by hand.
+  const retentionHours = source.retentionHours === undefined || source.retentionHours === null
+    || !Number.isFinite(hours) || hours < 0
+    ? DEFAULT_RETENTION_HOURS
+    : Math.min(hours, MAX_RETENTION_HOURS);
+  return { lang, stateFile, shortcut, retentionHours };
 }
 
 /**
@@ -74,6 +86,7 @@ export function apply(ctx, config = {}) {
       ctx,
       store,
       logger,
+      retentionMs: settings.retentionHours * 60 * 60 * 1000,
       probe: () => readAttachedSessionId(),
     });
     const queue = createJumpQueue();

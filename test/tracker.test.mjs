@@ -103,7 +103,7 @@ test('running -> idle becomes finished-unread and is persisted', () => {
   assert.equal(store.saves.at(-1).a.status, 'finished');
 });
 
-test('a session that is current when it finishes settles as read', () => {
+test('a session that is current when it finishes settles as read but stays listed', () => {
   let clock = 1_000;
   const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
   const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
@@ -113,10 +113,12 @@ test('a session that is current when it finishes settles as read', () => {
   harness.emit('agent/status', { agent, status: 'idle' });
   const snapshot = tracker.getSnapshot();
   assert.equal(snapshot.unread, 0);
-  assert.equal(snapshot.groups.length, 0);
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a']);
+  assert.equal(snapshot.flatRows[0].status, 'finished');
+  assert.equal(snapshot.flatRows[0].seenAt, 2_000);
 });
 
-test('a finished row becomes read when its session becomes current', () => {
+test('a finished row becomes read when its session becomes current, and is kept', () => {
   let clock = 1_000;
   const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
   const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
@@ -126,8 +128,11 @@ test('a finished row becomes read when its session becomes current', () => {
   assert.equal(tracker.getSnapshot().unread, 1);
 
   tracker.setCurrent('a');
-  assert.equal(tracker.getSnapshot().unread, 0);
-  assert.equal(tracker.getSnapshot().groups.length, 0);
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.unread, 0);
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a']);
+  assert.equal(snapshot.flatRows[0].status, 'finished');
+  assert.ok(snapshot.flatRows[0].seenAt >= 2_000);
 });
 
 test('subagents and never-prompted idle sessions are not tracked', () => {
@@ -139,7 +144,7 @@ test('subagents and never-prompted idle sessions are not tracked', () => {
   assert.equal(snapshot.rows?.length ?? 0, 0);
 });
 
-test('markSeen removes an unread row; a running row keeps a seen watermark', () => {
+test('markSeen settles a finished row as read and keeps it in the list', () => {
   let clock = 1_000;
   const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
   const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
@@ -152,8 +157,11 @@ test('markSeen removes an unread row; a running row keeps a seen watermark', () 
   assert.equal(tracker.getSnapshot().unread, 1);
 
   tracker.markSeen('a');
-  assert.equal(tracker.getSnapshot().unread, 0);
-  assert.equal(tracker.getSnapshot().groups.length, 0);
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.unread, 0);
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a']);
+  assert.equal(snapshot.flatRows[0].status, 'finished');
+  assert.ok(snapshot.flatRows[0].seenAt >= 2_000);
 });
 
 test('a disposed agent that was running finishes as unread', () => {
@@ -165,17 +173,66 @@ test('a disposed agent that was running finishes as unread', () => {
   assert.equal(snapshot.unread, 1);
 });
 
-test('load restores unread rows, drops stale running rows and read rows', async () => {
+test('load restores recent finished rows, drops stale running and expired rows', async () => {
+  const HOUR = 60 * 60 * 1000;
+  const now = 20 * HOUR;
   const store = makeStore({
-    a: { id: 'a', cwd: '/repo/app', title: 'A', status: 'finished', failed: false, updatedAt: 10, finishedAt: 10, seenAt: 0 },
-    b: { id: 'b', cwd: '/repo/app', title: 'B', status: 'running', failed: false, updatedAt: 10, finishedAt: 0, seenAt: 0 },
-    c: { id: 'c', cwd: '/repo/app', title: 'C', status: 'finished', failed: false, updatedAt: 10, finishedAt: 10, seenAt: 11 },
+    a: { id: 'a', cwd: '/repo/app', title: 'A', status: 'finished', failed: false, updatedAt: now - 60_000, finishedAt: now - 60_000, seenAt: 0 },
+    b: { id: 'b', cwd: '/repo/app', title: 'B', status: 'running', failed: false, updatedAt: now - 60_000, finishedAt: 0, seenAt: 0 },
+    c: { id: 'c', cwd: '/repo/app', title: 'C', status: 'finished', failed: false, updatedAt: now - HOUR, finishedAt: now - HOUR, seenAt: now - HOUR + 1 },
+    d: { id: 'd', cwd: '/repo/app', title: 'D', status: 'finished', failed: false, updatedAt: now - 7 * HOUR, finishedAt: now - 7 * HOUR, seenAt: 0 },
   });
-  const { tracker } = makeTracker({ agents: [], store });
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now });
   await tracker.load();
   const snapshot = tracker.getSnapshot();
   assert.equal(snapshot.unread, 1);
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a', 'c']);
+});
+
+test('load settles a persisted unread row for the attached session as read', async () => {
+  const now = 5_000;
+  const store = makeStore({
+    a: { id: 'a', cwd: '/repo/app', title: 'A', status: 'finished', failed: false, updatedAt: now - 1_000, finishedAt: now - 1_000, seenAt: 0 },
+  });
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now });
+  tracker.setCurrent('a');
+  await tracker.load();
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.unread, 0);
   assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a']);
+  assert.ok(snapshot.flatRows[0].seenAt >= now - 1_000);
+});
+
+test('reconcile sweeps a finished row once the retention window closes', () => {
+  const HOUR = 60 * 60 * 1000;
+  let clock = 10 * HOUR;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
+  clock = 11 * HOUR;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  assert.equal(tracker.getSnapshot().unread, 1);
+
+  clock = 17 * HOUR + 1;
+  tracker.reconcile();
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.unread, 0);
+  assert.equal(snapshot.flatRows.length, 0);
+});
+
+test('the attached idle session is adopted and listed as read', () => {
+  const agent = makeAgent({
+    id: 'a',
+    status: 'idle',
+    events: [promptEvent('fix it'), { type: 'session/title', time: 110, data: { title: 'Fix login' } }],
+  });
+  const { tracker } = makeTracker({ agents: [agent], clock: () => 1_000, probe: () => 'a' });
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.currentId, 'a');
+  assert.equal(snapshot.unread, 0);
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['a']);
+  assert.equal(snapshot.flatRows[0].title, 'Fix login');
+  assert.equal(snapshot.flatRows[0].status, 'finished');
 });
 
 test('badge counts unread while hidden and clears when visible', async () => {
