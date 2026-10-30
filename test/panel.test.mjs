@@ -124,7 +124,7 @@ function createHarness(getSnapshot = snapshot, options = {}) {
   function render() {
     cursor = 0;
     depth += 1;
-    const tree = component({ React, ui, host, width: 40, height: 10, focused: true, visible: true });
+    const tree = component({ React, ui, host, width: 40, height: 10, focused: options.focused ?? true, visible: true });
     depth -= 1;
     if (depth === 0) {
       // Mount effects once the tree is built, like React does after a commit.
@@ -191,6 +191,24 @@ function findBox(node, key) {
   if (node.type === 'Box' && node.props?.key === key) return node;
   for (const child of node.children ?? []) {
     const hit = findBox(child, key);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+/** Find the Box that renders exactly `text` (a single-line chrome box). */
+function findBoxByText(node, text) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findBoxByText(child, text);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  }
+  if (node.type === 'Box' && textOf(node) === text) return node;
+  for (const child of node.children ?? []) {
+    const hit = findBoxByText(child, text);
     if (hit !== undefined) return hit;
   }
   return undefined;
@@ -381,4 +399,23 @@ test('panel: n creates a session in the selected row workspace', () => {
     { kind: 'new', cwd: '/repo/app', label: 'dsh-plugins', lang: 'zh' },
   ]);
   assert.deepEqual(harness.opened, ['jump']);
+});
+
+test('panel: header and footer keep the host chrome padding', () => {
+  // The host pads its PanelBar and the key hint under the rule by one column;
+  // unpadded plugin chrome would sit flush on the border next to them.
+  const cases = [
+    { focused: false, hint: '点击行跳转 · + 新建' },
+    { focused: true, hint: '↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新' },
+  ];
+  for (const { focused, hint } of cases) {
+    const harness = createHarness(snapshot, { focused });
+    const tree = harness.render();
+    const header = findBoxByText(tree, '⠋ 1 运行 · ● 1 未读');
+    assert.ok(header, 'the header is rendered');
+    assert.equal(header.props.paddingX, 1, 'the header clears the panel edge');
+    const footer = findBoxByText(tree, hint);
+    assert.ok(footer, `the ${focused ? 'focused' : 'idle'} footer is rendered`);
+    assert.equal(footer.props.paddingX, 1, 'the footer clears the panel edge');
+  }
 });

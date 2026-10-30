@@ -374,15 +374,19 @@ export function createPanel(options) {
         items.slice(safeTop, safeTop + capacity).map(item => (item.type === 'header' ? renderGroup(item.group) : renderRow(item.row))),
       );
 
+    // The host pads its own chrome (PanelBar and the key hint under the rule)
+    // by one column; the panel's header and footer do the same, so their text
+    // lines up with the host hint below instead of sitting flush on the border.
+    // Rows keep the full width: their hover fill should bleed to both edges.
     return h(
       Box,
       { flexDirection: 'column', flexGrow: 1, width: '100%', overflow: 'hidden' },
       showHeader
-        ? h(Box, { height: 1, flexShrink: 0 }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length, spinner)))
+        ? h(Box, { height: 1, flexShrink: 0, paddingX: 1, overflow: 'hidden' }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length, spinner)))
         : null,
       body,
       showFooter
-        ? h(Box, { height: 1, flexShrink: 0 }, h(Text, { dimColor: true, wrap: 'truncate-end' }, focused ? strings.hintFocused : strings.hintIdle))
+        ? h(Box, { height: 1, flexShrink: 0, paddingX: 1, overflow: 'hidden' }, h(Text, { dimColor: true, wrap: 'truncate-end' }, focused ? strings.hintFocused : strings.hintIdle))
         : null,
     );
   };
