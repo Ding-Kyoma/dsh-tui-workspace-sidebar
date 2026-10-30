@@ -3,9 +3,8 @@
 A light right-side panel for dsh-tui that answers one question at a glance:
 **what is running, what finished while I was not looking, and where am I?**
 
-It replaces the full-screen `dsh-tui-workspace-inbox` approach with a normal
-side-panel tab: grouped by project, one line per conversation, hover to
-highlight, click to jump.
+It uses a normal side-panel tab instead of a full-screen view: grouped by
+project, one line per conversation, hover to highlight, click to jump.
 
 ```
 ⠋ 1 运行 · ● 1 未读
@@ -170,13 +169,6 @@ an empty state is used.
   rest at the next sweep.
 - **One lifecycle.** Do not install two copies under different names: the
   second activation cannot register the same panel/scene ids.
-
-## Relation to `dsh-tui-workspace-inbox`
-
-Both plugins are independent and can coexist technically (`/inbox` vs `/ws`),
-but they answer the same question with different weights. This one is the
-lightweight sidebar; the inbox plugin is the full-screen triage screen with
-search, filtering and a workspace rail. Only one is needed.
 
 ## Tests
 
