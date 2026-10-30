@@ -105,9 +105,9 @@ export function apply(ctx, config = {}) {
     void tracker.load();
 
     // A background ask has no answerer in dsh-tui 0.17.0: this relay parks it
-    // instead of letting the turn fail, and re-delivers it after a jump. It is
-    // feature-detected and yields to the host on every request, so the official
-    // fix makes it inert without a code change.
+    // instead of letting the turn fail, and re-delivers it only when the inbox
+    // jump opens that session. It is feature-detected and yields to the host on
+    // every request, so the official fix makes it inert without a code change.
     let relay;
     if (settings.relayQuestions) {
       try {
@@ -187,7 +187,14 @@ export function apply(ctx, config = {}) {
         warn('tuiScenes is unavailable; sidebar actions are disabled');
         return;
       }
-      const Scene = createJumpScene({ queue, tracker, config: settings });
+      const Scene = createJumpScene({
+        queue,
+        tracker,
+        config: settings,
+        // A background question is released only after this scene has actually
+        // adopted the session; the relay itself never forwards on its own.
+        deliverQuestion: id => relay?.deliver(id),
+      });
       let dispose;
       try {
         dispose = scenes.register({ id: JUMP_SCENE_ID, title: copy.sceneTitle, component: Scene }, ready);

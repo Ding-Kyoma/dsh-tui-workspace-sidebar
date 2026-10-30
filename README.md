@@ -40,8 +40,9 @@ process:
   unread finish, stays bold until the question settles, and carries a dim
   `待回答` (`needs you`) suffix so the two are distinguishable. The running and
   unread counters both include it. Clicking the row jumps to the session and the
-  host's normal questionnaire / plan-review panel appears; the original tool
-  call is still waiting for that answer. See
+  host's normal questionnaire / plan-review panel appears; only that explicit
+  click releases the question — it never pops up while you are in another
+  conversation. The original tool call is still waiting for that answer. See
   [Background questions](#background-questions).
 - **Finished and already read** — jumping to a conversation (or pressing `m`)
   no longer removes it; the dot becomes a dim `✓` and the row stays for the
@@ -209,12 +210,22 @@ The plugin registers a fallback answerer on the same Cordis waterfall:
    masked;
 3. it parks the request, marks the row waiting (green `●` + `待回答`), and keeps
    the original tool call pending instead of failing it;
-4. when the row is clicked and the TUI attaches to that session, the relay
-   re-dispatches the same request through `userQuestions.ask()`. The host's
-   answerer now claims it, the normal questionnaire / plan-review panel appears,
-   and the answer resolves the parked tool call. A cancellation
-   (`ASK_CANCELLED`) propagates normally, so cancelling a plan review keeps you
-   in plan mode instead of producing a `NO_PROVIDER` error.
+4. the question is re-dispatched **only when the row is clicked in the inbox**:
+   the jump scene adopts the session and then calls the relay's explicit
+   `deliver()`. The host's answerer now claims it, the normal questionnaire /
+   plan-review panel appears, and the answer resolves the parked tool call. A
+   cancellation (`ASK_CANCELLED`) propagates normally, so cancelling a plan
+   review keeps you in plan mode instead of producing a `NO_PROVIDER` error.
+
+This is intentionally not automatic. The TUI's question store is shared across
+conversations, and its answerer is bound to whichever session the channel is
+attached to; a relay that watched attachment on its own would re-dispatch a
+background question as soon as that session became current anywhere in the
+process, and the panel could then surface in the conversation you are using.
+The relay therefore never reads the attached session to decide delivery (it
+only uses it to distinguish a foreground `NO_PROVIDER` from a background one).
+The inbox click is the explicit "handle this now" consent; the green dot is the
+only advance notice.
 
 The relay is deliberately a fallback, not a second question provider:
 
@@ -223,16 +234,18 @@ The relay is deliberately a fallback, not a second question provider:
 - the `FORWARD` marker is a private Symbol, so the plugin's own listener cannot
   park its re-dispatch a second time;
 - a `NO_PROVIDER` from the re-dispatch (the jump has not landed yet) keeps the
-  question parked and retries; other unexpected errors stay parked, log once,
-  and retry with backoff; a cancelled/aborted turn settles the parked ask;
+  question parked; the next inbox click tries again. Other unexpected errors
+  stay parked and log once; a cancelled/aborted turn settles the parked ask;
 - `relayQuestions: false` disables the whole relay.
 
 The turn stays blocked while the question is parked, exactly like a foreground
-question waiting for an answer. Jump to the row (or answer from the session
-screen) to resolve it, or cancel the turn. A timed `ask_user_question` still
-times out to `{ pending: true }`; the row's green dot then clears without an
-answer. The question is in-memory only: if the process exits while it is
-parked, the question is gone with the tool call.
+question waiting for an answer. Open the row from the inbox to release and
+answer it, or cancel the turn — opening the session by another route (`/resume`,
+the session screen) leaves the question parked, because only the inbox click
+releases it. A timed `ask_user_question` still times out to `{ pending: true }`;
+the row's green dot then clears without an answer. The question is in-memory
+only: if the process exits while it is parked, the question is gone with the
+tool call.
 
 ## Persistence
 
@@ -331,8 +344,10 @@ panel/scene/command/shortcut registration (including feature-detected
 degradation).
 
 The background-question tests cover the `next()`-first pass-through, parking on
-`NO_PROVIDER`, the tracker-subscription re-delivery after a jump, retrying a
-forwarded `NO_PROVIDER`, `ASK_CANCELLED` and aborted turns, disposal, unexpected
-errors, agentless requests, the private forward marker, the foreground
-`NO_PROVIDER` guard, multiple parked asks per agent, and the green-dot row /
-header counts / non-persistence of the waiting flag.
+`NO_PROVIDER`, explicit delivery after an inbox jump (and that changing the
+attached session alone never forwards), retrying a forwarded `NO_PROVIDER` on a
+later click, `ASK_CANCELLED` and aborted turns, disposal, unexpected errors,
+agentless requests, the private forward marker, the foreground `NO_PROVIDER`
+guard, multiple parked asks per agent, a double click while a forward is in
+flight, and the green-dot row / header counts / non-persistence of the waiting
+flag.

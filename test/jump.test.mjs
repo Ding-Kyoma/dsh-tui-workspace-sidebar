@@ -38,11 +38,12 @@ test('performJump: success marks the row and closes', async () => {
     channel: { resumeTo: async id => { calls.push(id); return { ok: true }; } },
     target: { id: 's1', lang: 'en' },
     onSeen: id => calls.push(`seen:${id}`),
+    onOpened: id => calls.push(`opened:${id}`),
     notify: text => calls.push(`notify:${text}`),
     close: () => calls.push('close'),
   });
   assert.deepEqual(result, { ok: true });
-  assert.deepEqual(calls, ['s1', 'seen:s1', 'close']);
+  assert.deepEqual(calls, ['s1', 'seen:s1', 'opened:s1', 'close']);
 });
 
 test('performJump: failures notify, never mark seen, and close the scene', async () => {
@@ -58,6 +59,7 @@ test('performJump: failures notify, never mark seen, and close the scene', async
       channel: { resumeTo: async () => ({ ok: false, ...spec }) },
       target: { id: 's1', lang: 'en' },
       onSeen: () => calls.push('seen'),
+      onOpened: () => calls.push('opened'),
       notify: text => calls.push(text),
       close: () => calls.push('close'),
     });
@@ -65,6 +67,7 @@ test('performJump: failures notify, never mark seen, and close the scene', async
     assert.equal(result.reason, spec.reason);
     assert.ok(calls.some(text => text.includes(spec.expect)), `${spec.reason} should toast ${spec.expect}`);
     assert.ok(!calls.includes('seen'));
+    assert.ok(!calls.includes('opened'), 'a failed jump must not release a parked question');
     assert.equal(calls.at(-1), 'close');
   }
 });

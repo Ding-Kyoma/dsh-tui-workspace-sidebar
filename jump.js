@@ -136,6 +136,7 @@ function messageOf(error) {
  *   channel: any,
  *   target: {id: string, title?: string, cwd?: string, lang?: 'zh' | 'en'} | undefined,
  *   onSeen?: (id: string) => void,
+ *   onOpened?: (id: string) => void,
  *   notify?: (text: string) => void,
  *   close?: () => void,
  * }} input
@@ -182,6 +183,12 @@ export async function performJump(input) {
       input.onSeen?.(target.id);
     } catch {
       // Marking the row read is a convenience; the switch already happened.
+    }
+    try {
+      input.onOpened?.(target.id);
+    } catch {
+      // Releasing a parked question must not turn a successful jump into a
+      // failure; the inbox row still shows the waiting dot.
     }
     return done({ ok: true });
   }
@@ -327,10 +334,11 @@ export async function performNewSession(input) {
  *   queue: ReturnType<typeof createJumpQueue>,
  *   tracker: {markSeen: (id: string) => boolean, setCurrent?: (id: string) => void},
  *   config: {lang?: 'zh' | 'en' | 'auto'},
+ *   deliverQuestion?: (id: string) => void,
  * }} options
  */
 export function createJumpScene(options) {
-  const { queue, tracker, config } = options;
+  const { queue, tracker, config, deliverQuestion } = options;
 
   /**
    * @param {any} props
@@ -371,6 +379,9 @@ export function createJumpScene(options) {
           tracker.markSeen(id);
           tracker.setCurrent?.(id);
         },
+        // The jump is the explicit "open this conversation" action, so this is
+        // the only place a parked background question is released to the TUI.
+        onOpened: (id) => deliverQuestion?.(id),
         notify,
         close,
       });

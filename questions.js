@@ -17,10 +17,12 @@
  * 3. instead of answering, it parks the request, marks the sidebar row as
  *    waiting (the same green dot as a finished-unread row), and keeps the
  *    original promise pending;
- * 4. once the TUI is attached to that session (the person clicked the row), it
- *    re-dispatches the same request through `userQuestions.ask()` with a private
- *    marker. The host's answerer now claims it, the normal questionnaire /
- *    plan-review panel appears, and the answer resolves the parked promise.
+ * 4. the question is re-dispatched only when the person opens that row in the
+ *    inbox: the jump scene calls `deliver(agentId)` after the channel adopts the
+ *    session. The relay never watches the attached session to decide delivery,
+ *    so a background question cannot pop up in the conversation the person is
+ *    currently using. The green dot is the only advance notice, and the jump is
+ *    the explicit "handle this now" action.
  *
  * The design is intentionally decoupled from the host's fix for the same bug:
  * the relay always yields with `next()` and only acts on `NO_PROVIDER`, so once
@@ -35,12 +37,6 @@
  * `next()` instead of parking it a second time.
  */
 const FORWARD = Symbol('workspace-sidebar.forward');
-
-/** How often a parked question checks whether its session became attached. */
-const DEFAULT_POLL_MS = 1_000;
-
-/** Upper bound for the retry delay after an unexpected forward failure. */
-const MAX_RETRY_MS = 10_000;
 
 /**
  * @param {unknown} error
@@ -106,23 +102,14 @@ function agentIdOf(request) {
  *   tracker?: any,
  *   probe?: () => string | undefined,
  *   logger?: {warn?: (message: string) => void},
- *   now?: () => number,
- *   pollMs?: number,
  *   service?: any,
  * }} [options]
  */
 export function createQuestionRelay(options = {}) {
   const { ctx, tracker, probe, logger } = options;
-  const clock = typeof options.now === 'function' ? options.now : Date.now;
-  const pollMs = options.pollMs === 0
-    ? 0
-    : (Number.isFinite(options.pollMs) && options.pollMs > 0 ? Number(options.pollMs) : DEFAULT_POLL_MS);
 
   let service = options.service;
   let disposed = false;
-  let flushQueued = false;
-  /** @type {ReturnType<typeof setInterval> | undefined} */
-  let timer;
   const disposers = [];
   /** @type {Map<string, any[]>} */
   const parked = new Map();
@@ -251,27 +238,13 @@ export function createQuestionRelay(options = {}) {
     if (error !== undefined) entry.reject(error);
     else entry.resolve(answer);
     updateWaiting(entry.agentId);
-    if (parked.size === 0) stopPoll();
-  }
-
-  function stopPoll() {
-    if (timer === undefined) return;
-    clearInterval(timer);
-    timer = undefined;
-  }
-
-  function startPoll() {
-    if (disposed || timer !== undefined || pollMs <= 0) return;
-    timer = setInterval(() => {
-      flushNow();
-    }, pollMs);
-    timer.unref?.();
   }
 
   /**
    * Park a request that no answerer claimed. The returned promise is what the
    * original `UserQuestionService.ask()` call is waiting on; it resolves with
-   * the answer once the question is re-delivered and answered.
+   * the answer once the person opens the row and answers the re-dispatched
+   * question.
    *
    * @param {any} request
    * @returns {Promise<any>}
@@ -291,8 +264,6 @@ export function createQuestionRelay(options = {}) {
       reject: undefined,
       settled: false,
       forwarding: false,
-      failures: 0,
-      nextAttemptAt: 0,
       warned: false,
       onAbort: undefined,
     };
@@ -317,11 +288,6 @@ export function createQuestionRelay(options = {}) {
     }
 
     updateWaiting(agentId);
-    startPoll();
-    // The session may already be attached (a race between the ask and a jump,
-    // or the panel was hidden while the TUI was on the right session). Forward
-    // on the next microtask instead of waiting for the poll.
-    scheduleFlush();
     return promise;
   }
 
@@ -331,7 +297,6 @@ export function createQuestionRelay(options = {}) {
   function forward(entry) {
     const current = resolveService();
     if (current === undefined) {
-      entry.nextAttemptAt = clock() + MAX_RETRY_MS;
       if (!entry.warned) {
         entry.warned = true;
         warn('userQuestions is unavailable; the parked question stays pending');
@@ -374,13 +339,9 @@ export function createQuestionRelay(options = {}) {
     }
     if (isNoProvider(error)) {
       // The channel has not adopted the session yet, or the question panel is
-      // still starting. Stay parked; the next poll tries again. NO_PROVIDER is
-      // never surfaced to the original caller.
-      entry.nextAttemptAt = 0;
+      // still starting. Stay parked; a later inbox click can try again.
       return;
     }
-    entry.failures += 1;
-    entry.nextAttemptAt = clock() + Math.min(1000 * 2 ** (entry.failures - 1), MAX_RETRY_MS);
     if (!entry.warned) {
       entry.warned = true;
       warn('forwarding a parked question failed', error);
@@ -388,36 +349,26 @@ export function createQuestionRelay(options = {}) {
   }
 
   /**
-   * Re-deliver every parked question whose agent is now attached. Both the
-   * probe file and the tracker are candidates: a sidebar jump updates the
-   * tracker immediately, while a `/resume` or the session screen updates the
-   * probe, and either side can be a moment stale.
+   * Re-deliver the parked questions for one agent. Only the inbox jump scene
+   * calls this, after the channel has adopted the session: that is the explicit
+   * "open this conversation" action. The relay never forwards on its own.
+   *
+   * @param {string} agentId
+   * @returns {boolean} whether at least one parked question was attempted
    */
-  function flushNow() {
-    if (disposed || parked.size === 0) return;
-    const candidates = new Set();
-    const probed = readProbe();
-    if (probed !== '') candidates.add(probed);
-    const tracked = readTracked();
-    if (tracked !== '') candidates.add(tracked);
-    for (const id of candidates) {
-      const list = parked.get(id);
-      if (list === undefined) continue;
-      for (const entry of [...list]) {
-        if (entry.settled || entry.forwarding) continue;
-        if (entry.nextAttemptAt > clock()) continue;
-        forward(entry);
-      }
+  function deliver(agentId) {
+    if (disposed) return false;
+    const id = typeof agentId === 'string' ? agentId : '';
+    if (id === '') return false;
+    const list = parked.get(id);
+    if (list === undefined) return false;
+    let attempted = false;
+    for (const entry of [...list]) {
+      if (entry.settled || entry.forwarding) continue;
+      forward(entry);
+      attempted = true;
     }
-  }
-
-  function scheduleFlush() {
-    if (disposed || flushQueued || parked.size === 0) return;
-    flushQueued = true;
-    queueMicrotask(() => {
-      flushQueued = false;
-      flushNow();
-    });
+    return attempted;
   }
 
   /**
@@ -457,14 +408,6 @@ export function createQuestionRelay(options = {}) {
         warn('registering the question listener failed', error);
       }
     }
-    if (typeof tracker?.subscribe === 'function') {
-      try {
-        const off = tracker.subscribe(scheduleFlush);
-        if (typeof off === 'function') disposers.push(off);
-      } catch (error) {
-        warn('subscribing to the tracker failed', error);
-      }
-    }
     if (typeof ctx?.inject === 'function') {
       try {
         ctx.inject(['userQuestions'], ready => {
@@ -485,8 +428,6 @@ export function createQuestionRelay(options = {}) {
   function dispose() {
     if (disposed) return;
     disposed = true;
-    stopPoll();
-    flushQueued = false;
     const entries = [];
     for (const list of parked.values()) entries.push(...list);
     for (const entry of entries) {
@@ -507,7 +448,7 @@ export function createQuestionRelay(options = {}) {
 
   return {
     attach,
-    flush: flushNow,
+    deliver,
     dispose,
   };
 }

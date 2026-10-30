@@ -80,7 +80,6 @@ function makeHarness({ probe, current = '', service } = {}) {
     ctx,
     tracker,
     probe: probe ?? (() => currentId),
-    pollMs: 0,
   });
   relay.attach();
 
@@ -127,42 +126,49 @@ test('relay: NO_PROVIDER for a background agent parks the ask and marks the row'
     assert.equal(req.agent.id, 'a');
     return Promise.resolve(answer);
   });
-  harness.setCurrent('a');
-  harness.relay.flush();
+  assert.equal(harness.relay.deliver('a'), true);
 
   assert.deepEqual(await pending, answer);
   assert.equal(harness.waiting.get('a'), false);
   assert.equal(service.calls.length, 1);
 });
 
-test('relay: a jump triggers the parked question through the tracker subscription', async () => {
+test('relay: changing the attached session alone does not deliver a question', async () => {
   const service = makeService();
   const harness = makeHarness({ service });
-  const answer = { answers: [{ id: 'q1', selected: ['yes'] }] };
-  service.setHandler(() => Promise.resolve(answer));
+  service.setHandler(() => Promise.resolve({ answers: [] }));
   const pending = harness.listener()(makeRequest(), () => Promise.reject(noProvider()));
   // Let the relay park first: a real jump is a later event, never the same
   // tick as the ask.
   await Promise.resolve();
 
   harness.setCurrent('a');
-  // The tracker subscriber schedules the forward on a microtask; give it a
-  // turn before asserting.
   await new Promise(resolve => setTimeout(resolve, 0));
 
-  assert.deepEqual(await pending, answer);
+  assert.equal(service.calls.length, 0, 'the relay must not forward on attachment alone');
+  assert.equal(harness.waiting.get('a'), true);
+
+  assert.equal(harness.relay.deliver('a'), true);
+  await pending;
   assert.equal(service.calls.length, 1);
   assert.equal(harness.waiting.get('a'), false);
 });
 
-test('relay: a forwarded NO_PROVIDER stays parked and retries later', async () => {
+test('relay: deliver ignores unknown and empty agents', () => {
+  const service = makeService();
+  const harness = makeHarness({ service });
+  assert.equal(harness.relay.deliver(''), false);
+  assert.equal(harness.relay.deliver('missing'), false);
+  assert.equal(service.calls.length, 0);
+});
+
+test('relay: a forwarded NO_PROVIDER stays parked and a later click retries', async () => {
   const service = makeService(() => Promise.reject(noProvider()));
   const harness = makeHarness({ service });
   const pending = harness.listener()(makeRequest(), () => Promise.reject(noProvider()));
   await Promise.resolve();
 
-  harness.setCurrent('a');
-  harness.relay.flush();
+  assert.equal(harness.relay.deliver('a'), true);
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(service.calls.length, 1);
@@ -170,7 +176,7 @@ test('relay: a forwarded NO_PROVIDER stays parked and retries later', async () =
 
   const answer = { answers: [{ id: 'q1', selected: ['yes'] }] };
   service.setHandler(() => Promise.resolve(answer));
-  harness.relay.flush();
+  assert.equal(harness.relay.deliver('a'), true);
   assert.deepEqual(await pending, answer);
   assert.equal(service.calls.length, 2);
 });
@@ -185,8 +191,7 @@ test('relay: a cancelled forward settles the original ask with ASK_CANCELLED', a
   const pending = harness.listener()(makeRequest(), () => Promise.reject(noProvider()));
   await Promise.resolve();
 
-  harness.setCurrent('a');
-  harness.relay.flush();
+  assert.equal(harness.relay.deliver('a'), true);
   await assert.rejects(pending, error => error === cancellation);
   assert.equal(harness.waiting.get('a'), false);
 });
@@ -265,7 +270,7 @@ test('relay: a foreground NO_PROVIDER is rethrown, not hidden behind a parked ro
   assert.equal(harness.waiting.size, 0);
 });
 
-test('relay: several asks for one agent keep the row waiting until the last settles', async () => {
+test('relay: several asks for one agent stay waiting until the last settles', async () => {
   const service = makeService();
   const harness = makeHarness({ service });
   const answers = [{ answers: [{ id: 'first' }] }, { answers: [{ id: 'second' }] }];
@@ -277,8 +282,7 @@ test('relay: several asks for one agent keep the row waiting until the last sett
   await Promise.resolve();
   assert.equal(harness.waiting.get('a'), true);
 
-  harness.setCurrent('a');
-  harness.relay.flush();
+  assert.equal(harness.relay.deliver('a'), true);
   await Promise.resolve();
   assert.equal(service.calls.length, 2, 'both parked asks were re-delivered');
 
@@ -288,5 +292,24 @@ test('relay: several asks for one agent keep the row waiting until the last sett
 
   resolvers[1](answers[1]);
   assert.deepEqual(await second, answers[1]);
+  assert.equal(harness.waiting.get('a'), false);
+});
+
+test('relay: a double click while a forward is in flight is a no-op', async () => {
+  const service = makeService();
+  const harness = makeHarness({ service });
+  const pending = harness.listener()(makeRequest(), () => Promise.reject(noProvider()));
+  await Promise.resolve();
+
+  let resolve;
+  service.setHandler(() => new Promise(done => {
+    resolve = done;
+  }));
+  assert.equal(harness.relay.deliver('a'), true);
+  assert.equal(harness.relay.deliver('a'), false);
+  assert.equal(service.calls.length, 1);
+
+  resolve({ answers: [] });
+  await pending;
   assert.equal(harness.waiting.get('a'), false);
 });
