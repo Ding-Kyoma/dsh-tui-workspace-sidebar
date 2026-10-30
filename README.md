@@ -25,7 +25,11 @@ process:
 - **Running** — the session's agent is inside a turn. The braille spinner is
   the chat's own spinner, frame for frame (80 ms). The header's running count
   and each project's counter drive the same frames, so all three spin in
-  lockstep.
+  lockstep. A row whose agent is in **plan mode** (the durable `plan/mode`
+  selection written by `dsh-plan-mode`) spins in the theme's plan colour —
+  sage green on the default dark palette, the same role the status line uses —
+  while the header total and project counters keep their muted spinner. Only a
+  running row is coloured; a finished conversation never keeps it.
 - **Finished but unread** — a turn ended while you were in another session. The
   row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
   first few seconds.
@@ -193,6 +197,7 @@ retention window (visibility, pruning, next-expiry), the current-session rule
 the ordering anchor inside them (running rows anchored to their turn start,
 finished rows to their finish marker, so concurrent running conversations never
 swap as their logs advance), subagent/no-prompt filtering, grouping, store
-atomicity/corruption, the jump failure matrix, the animated running counters and
-hover-only row fill, and the panel/scene/command/shortcut registration
+atomicity/corruption, the jump failure matrix, the animated running counters,
+the plan-mode spinner colour (row-only; header and project counters stay
+muted), hover-only row fill, and the panel/scene/command/shortcut registration
 (including feature-detected degradation).

@@ -93,10 +93,10 @@ export function messageText(message) {
 
 /**
  * A fresh folding state.
- * @returns {{count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt: number, failed: boolean}}
+ * @returns {{count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt: number, plan: boolean, failed: boolean}}
  */
 export function emptyFold() {
-  return { count: 0, title: '', prompt: '', summary: '', updatedAt: 0, turnStartedAt: 0, failed: false };
+  return { count: 0, title: '', prompt: '', summary: '', updatedAt: 0, turnStartedAt: 0, plan: false, failed: false };
 }
 
 /**
@@ -110,10 +110,15 @@ export function emptyFold() {
  * the ordering anchor for a running row, so the hundreds of events inside one
  * turn cannot make two concurrent conversations trade places.
  *
+ * `plan` is the durable plan-mode selection (`dsh-plan-mode` appends
+ * `plan/mode` at each accepted boundary). It is folded last-wins exactly like
+ * dsh-tui's own status-line indicator, so a resumed session that already has
+ * the event history is classified correctly on first sight.
+ *
  * @param {readonly unknown[]} events
  * @param {number} fromIndex
- * @param {{count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt?: number, failed: boolean}} state
- * @returns {{state: {count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt: number, failed: boolean}, count: number}}
+ * @param {{count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt?: number, plan?: boolean, failed: boolean}} state
+ * @returns {{state: {count: number, title: string, prompt: string, summary: string, updatedAt: number, turnStartedAt: number, plan: boolean, failed: boolean}, count: number}}
  */
 export function foldAgentEvents(events, fromIndex, state) {
   const input = Array.isArray(events) ? events : [];
@@ -121,6 +126,8 @@ export function foldAgentEvents(events, fromIndex, state) {
   let { title, prompt, summary, updatedAt, failed } = state;
   // A caller may hand in a state folded before the anchor existed; treat it as 0.
   let turnStartedAt = Number(state?.turnStartedAt) || 0;
+  // Same tolerance for the plan flag: an older fold state simply means "off".
+  let plan = state?.plan === true;
   for (let index = start; index < input.length; index += 1) {
     const event = input[index];
     if (!event || typeof event !== 'object') continue;
@@ -130,6 +137,12 @@ export function foldAgentEvents(events, fromIndex, state) {
     switch (event.type) {
       case 'turn/start': {
         if (Number.isFinite(time) && time > 0) turnStartedAt = Math.max(turnStartedAt, time);
+        break;
+      }
+      case 'plan/mode': {
+        // Only a boolean is a valid durable selection; a malformed payload
+        // keeps the previous state instead of flapping the row colour.
+        if (typeof data.active === 'boolean') plan = data.active;
         break;
       }
       case 'session/title': {
@@ -167,7 +180,7 @@ export function foldAgentEvents(events, fromIndex, state) {
         break;
     }
   }
-  return { state: { count: input.length, title, prompt, summary, updatedAt, turnStartedAt, failed }, count: input.length };
+  return { state: { count: input.length, title, prompt, summary, updatedAt, turnStartedAt, plan, failed }, count: input.length };
 }
 
 /**
@@ -296,6 +309,10 @@ export function isVisible(row, options = {}) {
  * what keeps concurrent running conversations from swapping places. The field
  * is in-memory only: a running row is dropped on the next start anyway.
  *
+ * `plan` is a display-only flag copied from the fold while the row runs; a
+ * finished row always clears it, because the inbox only colours a spinner
+ * that is actually spinning.
+ *
  * @param {any} prev
  * @param {{
  *   id: string,
@@ -303,6 +320,7 @@ export function isVisible(row, options = {}) {
  *   title: string,
  *   running: boolean,
  *   failed?: boolean,
+ *   plan?: boolean,
  *   updatedAt: number,
  *   turnStartedAt?: number,
  *   currentId: string,
@@ -336,6 +354,7 @@ export function applyRowState(prev, input) {
       title,
       status: 'running',
       failed: Boolean(input.failed),
+      plan: input.plan === true,
       updatedAt,
       finishedAt: 0,
       seenAt: Number(prev?.seenAt) || 0,
@@ -351,6 +370,7 @@ export function applyRowState(prev, input) {
       title,
       status: 'finished',
       failed: Boolean(input.failed),
+      plan: false,
       updatedAt: updatedAt || finishedAt,
       finishedAt,
       // A session the person is actively looking at settles as read: a badge
@@ -372,6 +392,7 @@ export function applyRowState(prev, input) {
       title,
       status: 'finished',
       failed: Boolean(input.failed),
+      plan: false,
       updatedAt: finishedAt,
       finishedAt,
       seenAt: finishedAt,
@@ -386,6 +407,7 @@ export function applyRowState(prev, input) {
     title,
     status: prev.status === 'finished' ? 'finished' : prev.status,
     failed: input.failed === undefined ? Boolean(prev.failed) : Boolean(input.failed),
+    plan: false,
     updatedAt: Math.max(Number(prev.updatedAt) || 0, updatedAt),
     finishedAt,
     seenAt: Number(prev.seenAt) || 0,
@@ -458,7 +480,7 @@ export function nextExpiry(rows, retentionMs, currentId) {
 }
 
 /**
- * @typedef {{id: string, cwd: string, title: string, status: string, failed: boolean, updatedAt: number, finishedAt: number, seenAt: number, runningAt?: number}} SidebarRow
+ * @typedef {{id: string, cwd: string, title: string, status: string, failed: boolean, plan?: boolean, updatedAt: number, finishedAt: number, seenAt: number, runningAt?: number}} SidebarRow
  */
 
 /**
@@ -656,13 +678,22 @@ export function spinnerGlyph(frame) {
  * has looked at yet; the dimmed checkmark once it has been read; a cross for a
  * failed turn (also dimmed once read).
  *
+ * A running plan-mode conversation keeps the same spinner character and dim
+ * state but borrows the theme's plan colour, so the row says "this turn is
+ * planning" without a second glyph. Only the row glyphs take that colour: the
+ * header total and the project counters keep counting turns, not modes.
+ *
  * @param {SidebarRow} row
  * @param {number} frame
  * @returns {{char: string, color: string | undefined, dim: boolean}}
  */
 export function glyphFor(row, frame) {
   if (row?.status === 'running') {
-    return { char: spinnerGlyph(frame), color: 'suggestion', dim: false };
+    return {
+      char: spinnerGlyph(frame),
+      color: row.plan === true ? 'planMode' : 'suggestion',
+      dim: false,
+    };
   }
   if (!isUnread(row)) {
     return row?.failed

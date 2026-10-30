@@ -67,6 +67,10 @@ function turnStart(time) {
   return { type: 'turn/start', time, data: { turn: 1 } };
 }
 
+function planEvent(active, time = 100) {
+  return { type: 'plan/mode', time, data: { active } };
+}
+
 function makeTracker({ agents = [], store = makeStore(), clock = () => 1_000, probe } = {}) {
   const harness = makeCtx({ getAgents: { list: () => agents } });
   const tracker = createTracker({ ctx: harness.ctx, store, logger: { warn() {} }, now: clock, probe });
@@ -88,6 +92,29 @@ test('attach seeds a running agent with its title', () => {
   assert.equal(snapshot.groups[0].title, 'app');
   assert.equal(snapshot.groups[0].rows[0].title, 'Fix login');
   assert.equal(snapshot.groups[0].rows[0].status, 'running');
+});
+
+test('a running plan-mode agent is flagged, and flipping the selection updates the row', () => {
+  const events = [promptEvent('plan it', 100), turnStart(100), planEvent(true, 110)];
+  const planAgent = makeAgent({ id: 'plan', status: 'running', events });
+  const plainAgent = makeAgent({ id: 'plain', status: 'running', events: [promptEvent('do it', 100), turnStart(100)] });
+  const { tracker, harness } = makeTracker({ agents: [planAgent, plainAgent] });
+
+  const rowOf = id => tracker.getSnapshot().flatRows.find(row => row.id === id);
+  assert.equal(rowOf('plan').plan, true);
+  assert.equal(rowOf('plain').plan, false);
+  const version = tracker.getVersion();
+
+  events.push(planEvent(false, 120));
+  assert.equal(tracker.reconcile(), true);
+  assert.equal(rowOf('plan').plan, false);
+  assert.ok(tracker.getVersion() > version, 'the flag flip re-renders the panel');
+
+  // Leaving plan mode and finishing settles the row as a normal finish.
+  planAgent.status = 'idle';
+  harness.emit('agent/status', { agent: planAgent, status: 'idle' });
+  assert.equal(rowOf('plan').status, 'finished');
+  assert.equal(rowOf('plan').plan, false);
 });
 
 test('two running sessions keep a stable order while their logs advance', () => {

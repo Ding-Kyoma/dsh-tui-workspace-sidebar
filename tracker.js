@@ -108,6 +108,7 @@ function sameRow(left, right) {
     && left.title === right.title
     && left.status === right.status
     && left.failed === right.failed
+    && Boolean(left.plan) === Boolean(right.plan)
     && left.updatedAt === right.updatedAt
     && left.finishedAt === right.finishedAt
     && left.seenAt === right.seenAt
@@ -292,6 +293,9 @@ export function createTracker(options) {
       title,
       running,
       failed: fold.failed,
+      // Display-only while the row runs: the panel colours a planning turn's
+      // spinner. applyRowState clears it on finish; the store never persists it.
+      plan: fold.plan,
       updatedAt: fold.updatedAt,
       // The row's sort anchor while it runs: the start of its current turn.
       // In-turn events keep updating `updatedAt` without moving the row.

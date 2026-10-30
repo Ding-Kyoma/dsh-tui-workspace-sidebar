@@ -101,6 +101,54 @@ test('foldAgentEvents: the newest turn start becomes the ordering anchor', () =>
   assert.equal(legacy.state.turnStartedAt, 400);
 });
 
+test('foldAgentEvents: plan mode is last-wins and defaults to off', () => {
+  assert.equal(emptyFold().plan, false);
+
+  const first = foldAgentEvents([
+    { type: 'plan/mode', time: 10, data: { active: true } },
+    { type: 'assistant/message', time: 20, data: { message: { content: [{ type: 'text', text: 'planning' }] } } },
+  ], 0, emptyFold());
+  assert.equal(first.state.plan, true);
+
+  // A malformed payload is ignored; the last boolean wins.
+  const continued = foldAgentEvents([
+    { type: 'plan/mode', time: 10, data: { active: true } },
+    { type: 'assistant/message', time: 20, data: { message: { content: [{ type: 'text', text: 'planning' }] } } },
+    { type: 'plan/mode', time: 30, data: { active: 'yes' } },
+    { type: 'plan/mode', time: 40, data: { active: false } },
+  ], first.count, first.state);
+  assert.equal(continued.state.plan, false);
+
+  // A later checkpoint resumes from the folded selection.
+  const reentered = foldAgentEvents([
+    { type: 'plan/mode', time: 10, data: { active: true } },
+    { type: 'assistant/message', time: 20, data: { message: { content: [{ type: 'text', text: 'planning' }] } } },
+    { type: 'plan/mode', time: 30, data: { active: 'yes' } },
+    { type: 'plan/mode', time: 40, data: { active: false } },
+    { type: 'plan/mode', time: 50, data: { active: true } },
+  ], continued.count, continued.state);
+  assert.equal(reentered.state.plan, true);
+});
+
+test('applyRowState: plan mode is carried while running and cleared on finish', () => {
+  const running = applyRowState(undefined, {
+    id: 'a', cwd: '/r', title: 't', running: true, plan: true, updatedAt: 10, currentId: '', now: 10,
+  });
+  assert.equal(running.status, 'running');
+  assert.equal(running.plan, true);
+
+  const busy = applyRowState(running, {
+    id: 'a', cwd: '/r', title: 't', running: true, plan: false, updatedAt: 20, currentId: '', now: 20,
+  });
+  assert.equal(busy.plan, false);
+
+  const idle = applyRowState(busy, {
+    id: 'a', cwd: '/r', title: 't', running: false, failed: false, updatedAt: 30, currentId: '', now: 30,
+  });
+  assert.equal(idle.status, 'finished');
+  assert.equal(idle.plan, false);
+});
+
 test('applyRowState: idle agents never seen running are ignored', () => {
   assert.equal(applyRowState(undefined, { id: 'a', cwd: '/r', title: '', running: false, updatedAt: 0, currentId: '', now: 5 }), undefined);
 });
@@ -405,6 +453,21 @@ test('glyphFor: spinner for running, dot for unread, dim check once read, cross 
   assert.deepEqual(glyphFor(row({ seenAt: 2_000 }), 0), { char: '✓', color: 'success', dim: true });
   assert.deepEqual(glyphFor(row({ failed: true }), 0), { char: '✕', color: 'error', dim: false });
   assert.deepEqual(glyphFor(row({ failed: true, seenAt: 2_000 }), 0), { char: '✕', color: 'error', dim: true });
+});
+
+test('glyphFor: a running plan-mode row spins in the plan colour', () => {
+  assert.deepEqual(glyphFor(row({ status: 'running', plan: true }), 0), {
+    char: RUNNING_FRAMES[0],
+    color: 'planMode',
+    dim: false,
+  });
+  assert.deepEqual(glyphFor(row({ status: 'running', plan: false }), 0), {
+    char: RUNNING_FRAMES[0],
+    color: 'suggestion',
+    dim: false,
+  });
+  // A finished row never keeps the plan colour, even if a stale flag lingers.
+  assert.equal(glyphFor(row({ plan: true }), 0).color, 'success');
 });
 
 test('spinnerGlyph: every running count shares one frame and junk settles on the first', () => {

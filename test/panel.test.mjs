@@ -40,7 +40,7 @@ function snapshot() {
  * A tiny fake React: enough state/refs to drive the panel without a renderer,
  * so the animation and highlight decisions stay unit-testable.
  */
-function createHarness() {
+function createHarness(getSnapshot = snapshot) {
   const state = new Map();
   let cursor = 0;
   let tick = 0;
@@ -82,7 +82,7 @@ function createHarness() {
   };
   const tracker = {
     subscribe: () => () => {},
-    getSnapshot: snapshot,
+    getSnapshot,
     setCurrent() {},
     setPanelVisible() {},
     reconcile() {},
@@ -144,6 +144,26 @@ function findBox(node, key) {
   return undefined;
 }
 
+/** Every Text node in the tree, so styling can be asserted on the actual leaf. */
+function textNodes(node, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out;
+  if (Array.isArray(node)) {
+    for (const child of node) textNodes(child, out);
+    return out;
+  }
+  if (node.type === 'Text') {
+    out.push(node);
+    return out;
+  }
+  for (const child of node.children ?? []) textNodes(child, out);
+  return out;
+}
+
+/** Direct Text children of a row: the glyph and its spacer (the rest are boxed). */
+function directTexts(node) {
+  return (node.children ?? []).filter(child => child?.type === 'Text');
+}
+
 test('panel: the header and project counters follow the shared animation frame', () => {
   const harness = createHarness();
   const first = textLines(harness.render());
@@ -176,4 +196,55 @@ test('panel: the current row has no fill, hover fills it and leaving clears it',
   hovered.props.onMouseLeave();
   const cleared = findBox(harness.render(), 'run');
   assert.equal(cleared.props.backgroundColor, undefined);
+});
+
+test('panel: only a running plan-mode row spins in the plan colour', () => {
+  const planRow = makeRow({
+    id: 'plan',
+    title: '规划重构',
+    status: 'running',
+    plan: true,
+    finishedAt: 0,
+    seenAt: 0,
+    updatedAt: NOW - 90_000,
+  });
+  const plainRow = makeRow({
+    id: 'run',
+    title: '给补丁跑个验证',
+    status: 'running',
+    plan: false,
+    finishedAt: 0,
+    seenAt: 0,
+    updatedAt: NOW - 120_000,
+  });
+  const rows = [planRow, plainRow, makeRow({ id: 'cur', title: '修复登录页样式' })];
+  const harness = createHarness(() => ({
+    groups: [{ key: '/repo/app', cwd: '/repo/app', title: 'dsh-plugins', running: 2, unread: 0, rows }],
+    running: 2,
+    unread: 0,
+    flatRows: rows,
+    currentId: 'cur',
+    agentsAvailable: true,
+    version: 1,
+  }));
+
+  const tree = harness.render();
+  const planGlyph = directTexts(findBox(tree, 'plan'))[0];
+  assert.equal(textOf(planGlyph), RUNNING_FRAMES[0]);
+  assert.equal(planGlyph.props.color, 'planMode');
+
+  const plainGlyph = directTexts(findBox(tree, 'run'))[0];
+  assert.equal(textOf(plainGlyph), RUNNING_FRAMES[0]);
+  assert.equal(plainGlyph.props.color, 'suggestion');
+
+  // The header total and the project counter keep their muted, uncoloured look.
+  const texts = textNodes(tree);
+  const header = texts.find(node => textOf(node).includes('2 运行'));
+  assert.ok(header, 'the header total is rendered');
+  assert.equal(header.props.color, undefined);
+  assert.equal(header.props.dimColor, true);
+  const counter = texts.find(node => textOf(node) === `${RUNNING_FRAMES[0]}2`);
+  assert.ok(counter, 'the project counter is rendered');
+  assert.equal(counter.props.color, undefined);
+  assert.equal(counter.props.dimColor, true);
 });
