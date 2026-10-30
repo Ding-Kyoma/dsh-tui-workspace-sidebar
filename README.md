@@ -81,6 +81,14 @@ The only public seam that hands a plugin a live channel is a registered scene.
 The panel therefore leaves a one-shot target in a queue and opens a small
 transition scene; that scene performs the resume and closes.
 
+The panel and the scene are registered from **one** injected context on
+purpose. dsh-tui attributes resource ownership to the calling activation
+context, and `host.openScene()` checks the scene's owner against the panel's
+owner. Registering them from two sibling `ctx.inject` callbacks gives them two
+different fibers, so the host refuses to open the scene ("belongs to another
+activation") even though `sceneReady()` is true. One injection for both
+(`['tuiPanels', 'tuiScenes']`) keeps the owners identical.
+
 Expect a brief full-screen card (`▣ project / title / 正在打开会话…`) for the
 duration of the resume. It is a trampoline, not a second inbox; there is no
 workspace list there.

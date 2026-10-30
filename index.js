@@ -249,21 +249,55 @@ export function apply(ctx, config = {}) {
     }
 
     /**
+     * Mount the panel and its transition scene from ONE injected context.
+     *
+     * Ownership in dsh-tui is attributed to the *calling activation context*.
+     * `host.openScene()` checks the scene's owner against the panel's owner, so
+     * a panel registered from one `ctx.inject` callback cannot open a scene
+     * registered from a sibling callback: they are different fibers and the
+     * host refuses with "belongs to another activation". Both registrations
+     * therefore share this `ready` (the same fiber), which is what makes the
+     * panel's click-to-jump work at all.
+     *
      * @param {any} ready
      */
-    function mountPanel(ready) {
+    function mountHost(ready) {
       let panels;
       try {
         panels = ready.get('tuiPanels', false);
       } catch (error) {
         warn('tuiPanels is unavailable', error);
-        return;
       }
+      let scenes;
+      try {
+        scenes = ready.get('tuiScenes', false);
+      } catch (error) {
+        warn('tuiScenes is unavailable', error);
+      }
+
       if (!panels || typeof panels.register !== 'function') {
         warn('tuiPanels is unavailable; the sidebar panel is disabled');
         return;
       }
+      if (!mountPanel(ready, panels)) return;
 
+      if (scenes && typeof scenes.register === 'function') mountScene(ready);
+      else warn('tuiScenes is unavailable; click-to-jump is disabled');
+
+      if (typeof ready.inject === 'function') {
+        ready.inject(['tuiPluginHost'], mountCommand);
+        ready.inject(['tuiShortcuts'], mountShortcut);
+      } else {
+        mountCommand(ready);
+        mountShortcut(ready);
+      }
+    }
+
+    /**
+     * @param {any} ready
+     * @param {any} panels
+     */
+    function mountPanel(ready, panels) {
       const Panel = createPanel({ tracker, config: settings, jump });
       let dispose;
       try {
@@ -277,11 +311,11 @@ export function apply(ctx, config = {}) {
         }, ready);
       } catch (error) {
         warn('the sidebar panel was rejected', error);
-        return;
+        return false;
       }
       if (typeof dispose !== 'function') {
         warn('the host rejected the sidebar panel (duplicate id or budget)');
-        return;
+        return false;
       }
       if (typeof ready.effect === 'function') {
         try {
@@ -298,22 +332,14 @@ export function apply(ctx, config = {}) {
       } else {
         tracker.setPanelHandle(panels, panelId);
       }
-
-      if (typeof ready.inject === 'function') {
-        ready.inject(['tuiScenes'], mountScene);
-        ready.inject(['tuiPluginHost'], mountCommand);
-        ready.inject(['tuiShortcuts'], mountShortcut);
-      } else {
-        mountScene(ready);
-        mountCommand(ready);
-        mountShortcut(ready);
-      }
+      return true;
     }
 
     if (typeof ctx?.inject === 'function') {
-      ctx.inject(['tuiPanels'], mountPanel);
+      // One injection for both: see mountHost() for the ownership reason.
+      ctx.inject(['tuiPanels', 'tuiScenes'], mountHost);
     } else {
-      mountPanel(ctx);
+      mountHost(ctx);
     }
   } catch (error) {
     warn('activation failed', error);

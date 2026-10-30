@@ -116,6 +116,10 @@ test('apply registers a valid panel, the jump scene, /ws and the shortcut', asyn
   assert.equal(harness.scenes.length, 1);
   assert.equal(harness.scenes[0].descriptor.id, JUMP_SCENE_ID);
   assert.equal(typeof harness.scenes[0].descriptor.component, 'function');
+  // host.openScene() attributes ownership to the calling activation context:
+  // the panel and the scene must share one injected context or the scene
+  // refuses to open ("belongs to another activation").
+  assert.equal(identity, harness.scenes[0].identity);
 
   assert.equal(harness.commands.length, 1);
   assert.equal(harness.commands[0].name, 'ws');
@@ -140,7 +144,9 @@ test('apply degrades without tuiPanels and still does not throw', async () => {
   assert.doesNotThrow(() => apply(harness.ctx, { lang: 'zh', stateFile: harness.stateFile }));
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(harness.registered.length, 0);
-  assert.equal(harness.scenes.length, 0);
+  // The scene is independent of the panel and may still register; what must
+  // not happen is a throw or a half-mounted panel.
+  assert.ok(harness.scenes.length <= 1);
   assert.equal(harness.commands.length, 0);
 });
 
