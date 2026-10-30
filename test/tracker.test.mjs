@@ -63,6 +63,10 @@ function promptEvent(text, time = 100) {
   return { type: 'user/message', time, data: { source: { kind: 'user' }, content: [{ type: 'text', text }] } };
 }
 
+function turnStart(time) {
+  return { type: 'turn/start', time, data: { turn: 1 } };
+}
+
 function makeTracker({ agents = [], store = makeStore(), clock = () => 1_000, probe } = {}) {
   const harness = makeCtx({ getAgents: { list: () => agents } });
   const tracker = createTracker({ ctx: harness.ctx, store, logger: { warn() {} }, now: clock, probe });
@@ -84,6 +88,62 @@ test('attach seeds a running agent with its title', () => {
   assert.equal(snapshot.groups[0].title, 'app');
   assert.equal(snapshot.groups[0].rows[0].title, 'Fix login');
   assert.equal(snapshot.groups[0].rows[0].status, 'running');
+});
+
+test('two running sessions keep a stable order while their logs advance', () => {
+  let clock = 10_000;
+  const eventsA = [promptEvent('fix a', 100), turnStart(100)];
+  const eventsB = [promptEvent('fix b', 200), turnStart(200)];
+  const a = makeAgent({ id: 'a', status: 'running', events: eventsA });
+  const b = makeAgent({ id: 'b', status: 'running', events: eventsB });
+  const { tracker, harness } = makeTracker({ agents: [a, b], clock: () => clock });
+
+  const order = () => tracker.getSnapshot().flatRows.map(row => row.id);
+  assert.deepEqual(order(), ['b', 'a']);
+
+  // Hundreds of in-turn events land; neither row is allowed to move.
+  for (let index = 0; index < 5; index += 1) {
+    clock += 1_000;
+    eventsA.push({ type: 'tool/call', time: clock, data: { name: 'Bash' } });
+    harness.emit('agent/status', { agent: a, status: 'running' });
+    assert.deepEqual(order(), ['b', 'a'], 'a new event in A must not lift A');
+    eventsB.push({ type: 'assistant/message', time: clock, data: {} });
+    harness.emit('agent/status', { agent: b, status: 'running' });
+    assert.deepEqual(order(), ['b', 'a'], 'a new event in B must not lift B');
+  }
+
+  // A genuinely new turn in A re-anchors it, once.
+  clock += 1_000;
+  eventsA.push(turnStart(clock));
+  harness.emit('agent/status', { agent: a, status: 'running' });
+  assert.deepEqual(order(), ['a', 'b']);
+  eventsA.push({ type: 'tool/call', time: clock + 1, data: { name: 'Bash' } });
+  clock += 10;
+  harness.emit('agent/status', { agent: a, status: 'running' });
+  assert.deepEqual(order(), ['a', 'b'], 'the new turn stays anchored');
+});
+
+test('a running row is anchored to the turn in its log, not to activation time', () => {
+  const agent = makeAgent({
+    id: 'a',
+    status: 'running',
+    events: [promptEvent('fix it', 5_000), turnStart(5_000)],
+  });
+  const { tracker } = makeTracker({ agents: [agent], clock: () => 100_000 });
+  assert.equal(tracker.getSnapshot().flatRows[0].runningAt, 5_000);
+});
+
+test('finishing a turn anchors the row to its finish marker', () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it', 100), turnStart(100)] });
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock });
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  const row = tracker.getSnapshot().flatRows[0];
+  assert.equal(row.status, 'finished');
+  assert.equal(row.finishedAt, 2_000);
+  assert.equal(row.runningAt, 0);
 });
 
 test('running -> idle becomes finished-unread and is persisted', () => {

@@ -12,6 +12,11 @@
  * the full event log in memory, which is exactly the projection `/resume`
  * itself uses to describe a session; anything older than this process is not
  * visible to the plugin at all (dsh-tui 0.17.0 exposes no cross-process roster).
+ *
+ * Ordering is anchored to state changes, not to events. A running row is
+ * anchored to its current `turn/start`; a finished row to its finish marker.
+ * The fold still keeps the latest event time for the relative label and the
+ * retention window, but that value never reorders two concurrent conversations.
  */
 
 import {
@@ -104,6 +109,7 @@ function sameRow(left, right) {
     && left.updatedAt === right.updatedAt
     && left.finishedAt === right.finishedAt
     && left.seenAt === right.seenAt
+    && (Number(left.runningAt) || 0) === (Number(right.runningAt) || 0)
   );
 }
 
@@ -285,6 +291,9 @@ export function createTracker(options) {
       running,
       failed: fold.failed,
       updatedAt: fold.updatedAt,
+      // The row's sort anchor while it runs: the start of its current turn.
+      // In-turn events keep updating `updatedAt` without moving the row.
+      turnStartedAt: fold.turnStartedAt,
       currentId,
       now,
     });

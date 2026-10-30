@@ -16,6 +16,7 @@ import {
   nextExpiry,
   normalizeCwd,
   oneLine,
+  orderAtOf,
   pruneRows,
   selectedRow,
   spinnerGlyph,
@@ -75,6 +76,25 @@ test('foldAgentEvents tolerates junk events', () => {
   assert.equal(count, 3);
   assert.equal(state.prompt, '');
   assert.equal(state.failed, false);
+  assert.equal(state.turnStartedAt, 0);
+});
+
+test('foldAgentEvents: the newest turn start becomes the ordering anchor', () => {
+  const { state, count } = foldAgentEvents([
+    { type: 'turn/start', time: 100, data: { turn: 1 } },
+    { type: 'tool/call', time: 150, data: { name: 'Bash' } },
+    { type: 'turn/end', time: 200, data: { reason: { kind: 'completed' } } },
+    { type: 'turn/start', time: 300, data: { turn: 2 } },
+  ], 0, emptyFold());
+  assert.equal(count, 4);
+  assert.equal(state.turnStartedAt, 300);
+  assert.equal(state.updatedAt, 300);
+
+  // Incremental folding keeps a checkpoint that predates the anchor field.
+  const legacy = foldAgentEvents([
+    { type: 'turn/start', time: 400, data: { turn: 3 } },
+  ], 0, { count: 0, title: '', prompt: '', summary: '', updatedAt: 0, failed: false });
+  assert.equal(legacy.state.turnStartedAt, 400);
 });
 
 test('applyRowState: idle agents never seen running are ignored', () => {
@@ -132,7 +152,49 @@ test('applyRowState: a new turn resets the finish marker and can be unread again
   assert.equal(again.failed, true);
 });
 
-test('buildGroups: lists the current conversation and recent read rows, newest activity first', () => {
+test('applyRowState: in-turn events never move a running row\'s anchor, a new turn does', () => {
+  const first = applyRowState(undefined, {
+    id: 'a', cwd: '/r', title: 't', running: true, updatedAt: 900, turnStartedAt: 900, currentId: '', now: 1_000,
+  });
+  assert.equal(first.runningAt, 900);
+
+  // A hundred tool calls later the activity time is fresh but the anchor is not.
+  const busy = applyRowState(first, {
+    id: 'a', cwd: '/r', title: 't', running: true, updatedAt: 5_000, turnStartedAt: 900, currentId: '', now: 5_100,
+  });
+  assert.equal(busy.runningAt, 900, 'the anchor survives in-turn activity');
+  assert.equal(busy.updatedAt, 5_000, 'the activity clock still advances');
+
+  const nextTurn = applyRowState(busy, {
+    id: 'a', cwd: '/r', title: 't', running: true, updatedAt: 6_000, turnStartedAt: 6_000, currentId: '', now: 6_100,
+  });
+  assert.equal(nextTurn.runningAt, 6_000, 'a new turn anchors the row again');
+
+  // A stale turn marker (fold reset after compaction) never drags the anchor back.
+  const stale = applyRowState(nextTurn, {
+    id: 'a', cwd: '/r', title: 't', running: true, updatedAt: 6_100, turnStartedAt: 500, currentId: '', now: 6_200,
+  });
+  assert.equal(stale.runningAt, 6_000);
+
+  const done = applyRowState(nextTurn, {
+    id: 'a', cwd: '/r', title: 't', running: false, updatedAt: 6_000, currentId: '', now: 7_000,
+  });
+  assert.equal(done.runningAt, 0);
+  assert.equal(done.finishedAt, 7_000);
+});
+
+test('applyRowState: without a turn marker the first sighting anchors to its last event', () => {
+  const first = applyRowState(undefined, {
+    id: 'a', cwd: '/r', title: 't', running: true, updatedAt: 700, currentId: '', now: 1_000,
+  });
+  assert.equal(first.runningAt, 700);
+  const later = applyRowState(first, {
+    id: 'a', cwd: '/r', title: 't', running: true, updatedAt: 900, currentId: '', now: 1_500,
+  });
+  assert.equal(later.runningAt, 700, 'later events do not move the anchor');
+});
+
+test('buildGroups: lists the current conversation and recent read rows, newest state first', () => {
   const registry = [{ path: '/repo/app/', title: 'App' }];
   const rows = [
     row({ id: 'run', status: 'running', finishedAt: 0, updatedAt: 300, title: 'Running', cwd: '/repo/app' }),
@@ -148,6 +210,49 @@ test('buildGroups: lists the current conversation and recent read rows, newest a
   assert.deepEqual(result.groups.map(group => group.title), ['App', 'other']);
   assert.deepEqual(result.groups[0].rows.map(item => item.id), ['current', 'run', 'unread-old', 'read']);
   assert.deepEqual(result.flatRows.map(item => item.id), ['current', 'run', 'unread-old', 'read', 'unread-new']);
+});
+
+test('buildGroups: concurrent running rows keep their order while their activity moves', () => {
+  const registry = [{ path: '/repo/app' }];
+  const now = 10_000;
+  const a = row({ id: 'a', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
+  const b = row({ id: 'b', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 2_000 });
+
+  // The newest turn is on top, and stays there no matter who logs next.
+  assert.deepEqual(buildGroups([a, b], registry, '', { now }).flatRows.map(item => item.id), ['b', 'a']);
+  a.updatedAt = 9_500;
+  assert.deepEqual(buildGroups([a, b], registry, '', { now }).flatRows.map(item => item.id), ['b', 'a']);
+  b.updatedAt = 9_700;
+  assert.deepEqual(buildGroups([a, b], registry, '', { now }).flatRows.map(item => item.id), ['b', 'a']);
+
+  // A new turn does move the row, once.
+  a.runningAt = 9_800;
+  assert.deepEqual(buildGroups([a, b], registry, '', { now }).flatRows.map(item => item.id), ['a', 'b']);
+});
+
+test('buildGroups: a finished row is anchored to its finish, not to later events', () => {
+  const done = row({ id: 'done', finishedAt: 1_000, updatedAt: 1_000 });
+  const other = row({ id: 'other', finishedAt: 2_000, updatedAt: 2_000 });
+  done.updatedAt = 5_000; // a late session/title (or job) event
+  assert.deepEqual(buildGroups([done, other], [], '', { now: 10_000 }).flatRows.map(item => item.id), ['other', 'done']);
+});
+
+test('buildGroups: projects with running conversations keep a stable order', () => {
+  const now = 10_000;
+  const a = row({ id: 'a', cwd: '/repo/one', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
+  const b = row({ id: 'b', cwd: '/repo/two', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 2_000 });
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['two', 'one']);
+  a.updatedAt = 9_000; // churn inside project one's turn
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['two', 'one']);
+});
+
+test('buildGroups: an exact anchor tie is broken running-first, then by id', () => {
+  const now = 10_000;
+  const rows = [
+    row({ id: 'b-finished', finishedAt: 2_000, updatedAt: 2_000, seenAt: 2_000 }),
+    row({ id: 'a-running', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 9_000 }),
+  ];
+  assert.deepEqual(buildGroups(rows, [], '', { now }).flatRows.map(item => item.id), ['a-running', 'b-finished']);
 });
 
 test('buildGroups: falls back to basename and keeps unknown directories together', () => {
@@ -194,6 +299,16 @@ test('activityAt: the later of the last event and the finish marker', () => {
   assert.equal(activityAt(row({ updatedAt: 100, finishedAt: 200 })), 200);
   assert.equal(activityAt(row({ updatedAt: 300, finishedAt: 200 })), 300);
   assert.equal(activityAt(undefined), 0);
+});
+
+test('orderAtOf: running rows use the turn anchor, finished rows the finish marker', () => {
+  assert.equal(orderAtOf(row({ status: 'running', runningAt: 500, updatedAt: 9_000, finishedAt: 0 })), 500);
+  assert.equal(orderAtOf(row({ status: 'finished', finishedAt: 1_000, updatedAt: 9_000 })), 1_000);
+  // Rows without an anchor (restored from disk, hand-built) fall back to activity.
+  assert.equal(orderAtOf(row({ status: 'running', updatedAt: 9_000, finishedAt: 0 })), 9_000);
+  assert.equal(orderAtOf(row({ status: 'finished', finishedAt: 0, updatedAt: 9_000 })), 9_000);
+  assert.equal(orderAtOf(undefined), 0);
+  assert.equal(orderAtOf({}), 0);
 });
 
 test('pruneRows: sweeps expired rows, pins the attached one, and respects the cap', () => {
