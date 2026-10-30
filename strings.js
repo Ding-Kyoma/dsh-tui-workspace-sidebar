@@ -31,9 +31,10 @@ const ZH = {
   // rule under every unfocused panel, so this footer must not repeat the key:
   // it only advertises what the pointer can do from here.
   hintIdle: '点击行跳转 · + 新建',
-  header(running, unread, total, spinner = '⠋') {
+  header(running, unread, total) {
+    // Static running count: one blank cell stands in for the old spinner.
     const parts = [];
-    if (running > 0) parts.push(`${spinner} ${running} 运行`);
+    if (running > 0) parts.push(` ${running} 运行`);
     if (unread > 0) parts.push(`● ${unread} 未读`);
     if (parts.length > 0) return parts.join(' · ');
     return total > 0 ? `共 ${total} 个会话` : '暂无会话';
@@ -75,9 +76,10 @@ const EN = {
   liveUnavailable: 'This kernel exposes no live session status; showing persisted records only',
   hintFocused: '↑↓ select · Enter jump · n new · m read · r refresh',
   hintIdle: 'click a row to jump · + new',
-  header(running, unread, total, spinner = '⠋') {
+  header(running, unread, total) {
+    // Static running count: one blank cell stands in for the old spinner.
     const parts = [];
-    if (running > 0) parts.push(`${spinner} ${running} running`);
+    if (running > 0) parts.push(` ${running} running`);
     if (unread > 0) parts.push(`● ${unread} unread`);
     if (parts.length > 0) return parts.join(' · ');
     return total > 0 ? `${total} conversation${total === 1 ? '' : 's'}` : 'nothing here yet';

@@ -767,10 +767,10 @@ export function selectedRow(rows, selectedId, currentId) {
 /**
  * The chat's spinner for a given animation frame.
  *
- * Every place that counts a running turn — the row glyph, the project counter
- * and the header — goes through this helper, so they spin in lockstep and a
- * hard-coded first frame cannot creep back in. Junk frames (NaN, negative,
- * huge) settle on a valid frame instead of rendering `undefined`.
+ * The row glyph and the project counter go through this helper, so they spin
+ * in lockstep and a hard-coded first frame cannot creep back in. The header
+ * total is plain text and deliberately does not use it. Junk frames (NaN,
+ * negative, huge) settle on a valid frame instead of rendering `undefined`.
  *
  * @param {number} frame
  * @returns {string}
@@ -794,7 +794,7 @@ export function spinnerGlyph(frame) {
  * A running plan-mode conversation keeps the same spinner character and dim
  * state but borrows the theme's plan colour, so the row says "this turn is
  * planning" without a second glyph. Only the row glyphs take that colour: the
- * header total and the project counters keep counting turns, not modes.
+ * project counters keep counting turns, not modes.
  *
  * @param {SidebarRow} row
  * @param {number} frame

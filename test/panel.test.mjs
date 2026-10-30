@@ -234,18 +234,21 @@ function directTexts(node) {
   return (node.children ?? []).filter(child => child?.type === 'Text');
 }
 
-test('panel: the header and project counters follow the shared animation frame', () => {
+test('panel: project counters and rows animate while the header stays static', () => {
   const harness = createHarness();
   const first = textLines(harness.render());
-  assert.ok(first.includes(`⠋ 1 运行 · ● 1 未读`), first.join('\n'));
+  assert.ok(first.includes(' 1 运行 · ● 1 未读'), first.join('\n'));
   assert.ok(first.some(line => line.includes('⠋1')), first.join('\n'));
 
   harness.setTick(400); // floor(400 / 80) % 10 = 5
   const second = textLines(harness.render());
   const frame = RUNNING_FRAMES[5];
   assert.equal(frame, '⠴');
-  assert.ok(second.includes(`${frame} 1 运行 · ● 1 未读`), second.join('\n'));
-  assert.ok(second.some(line => line.includes(`${frame}1`)), second.join('\n'));
+  assert.ok(second.includes(' 1 运行 · ● 1 未读'), 'the header total stays still');
+  assert.ok(second.some(line => line.includes(`${frame}1`)), 'the project counter still spins');
+
+  const runGlyph = directTexts(findBox(harness.render(), 'run'))[0];
+  assert.equal(textOf(runGlyph), frame, 'the running row glyph still spins');
 });
 
 test('panel: the current row has no fill, hover fills it and leaving clears it', () => {
@@ -307,12 +310,14 @@ test('panel: only a running plan-mode row spins in the plan colour', () => {
   assert.equal(textOf(plainGlyph), RUNNING_FRAMES[0]);
   assert.equal(plainGlyph.props.color, 'suggestion');
 
-  // The header total and the project counter keep their muted, uncoloured look.
+  // The project counter keeps its muted, uncoloured look; the header total is
+  // now plain text and carries no spinner.
   const texts = textNodes(tree);
   const header = texts.find(node => textOf(node).includes('2 运行'));
   assert.ok(header, 'the header total is rendered');
   assert.equal(header.props.color, undefined);
   assert.equal(header.props.dimColor, true);
+  assert.doesNotMatch(textOf(header), /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
   const counter = texts.find(node => textOf(node) === `${RUNNING_FRAMES[0]}2`);
   assert.ok(counter, 'the project counter is rendered');
   assert.equal(counter.props.color, undefined);
@@ -411,7 +416,7 @@ test('panel: header and footer keep the host chrome padding', () => {
   for (const { focused, hint } of cases) {
     const harness = createHarness(snapshot, { focused });
     const tree = harness.render();
-    const header = findBoxByText(tree, '⠋ 1 运行 · ● 1 未读');
+    const header = findBoxByText(tree, ' 1 运行 · ● 1 未读');
     assert.ok(header, 'the header is rendered');
     assert.equal(header.props.paddingX, 1, 'the header clears the panel edge');
     const footer = findBoxByText(tree, hint);
@@ -453,5 +458,5 @@ test('panel: a waiting row shows the green dot, stays bold, and says waiting', (
   assert.equal(title.props.bold, true);
   const lines = textLines(tree);
   assert.ok(lines.includes('待回答'), lines.join('\n'));
-  assert.ok(lines.includes('⠋ 1 运行 · ● 1 未读'), lines.join('\n'));
+  assert.ok(lines.includes(' 1 运行 · ● 1 未读'), lines.join('\n'));
 });

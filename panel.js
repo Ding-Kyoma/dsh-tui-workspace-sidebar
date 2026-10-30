@@ -71,8 +71,9 @@ export function createPanel(options) {
     const running = data.running > 0;
     const tick = ui.useAnimationTime(running ? RUNNING_FRAME_MS : 1000);
     const frame = Math.floor(tick / RUNNING_FRAME_MS) % RUNNING_FRAMES.length;
-    // One spinner character for the header, the project counters and the rows,
-    // so every running count animates in lockstep instead of freezing on ⠋.
+    // One spinner character for the project counters and the rows, so both
+    // animate in lockstep instead of freezing on ⠋. The header total is plain
+    // text and deliberately stays still.
     const spinner = spinnerGlyph(frame);
     const now = Date.now();
     const showTime = width >= 30;
@@ -392,7 +393,7 @@ export function createPanel(options) {
       Box,
       { flexDirection: 'column', flexGrow: 1, width: '100%', overflow: 'hidden' },
       showHeader
-        ? h(Box, { height: 1, flexShrink: 0, paddingX: 1, overflow: 'hidden' }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length, spinner)))
+        ? h(Box, { height: 1, flexShrink: 0, paddingX: 1, overflow: 'hidden' }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length)))
         : null,
       body,
       showFooter

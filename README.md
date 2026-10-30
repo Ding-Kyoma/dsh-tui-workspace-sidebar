@@ -8,7 +8,7 @@ project, one line per conversation, hover to highlight, click to jump. A `+`
 after a project's counters starts a fresh conversation in that workspace.
 
 ```
-⠋ 2 运行 · ● 2 未读
+ 2 运行 · ● 2 未读
 ▸ dsh-plugins ⠋2 ●2 +
   ● 后台计划                  待回答
   ● 重写 README               5 分钟前
@@ -24,14 +24,14 @@ after a project's counters starts a fresh conversation in that workspace.
 Four kinds of conversations, across every workspace that is live in this TUI
 process:
 
-- **Running** — the session's agent is inside a turn. The braille spinner is
-  the chat's own spinner, frame for frame (80 ms). The header's running count
-  and each project's counter drive the same frames, so all three spin in
-  lockstep. A row whose agent is in **plan mode** (the durable `plan/mode`
-  selection written by `dsh-plan-mode`) spins in the theme's plan colour —
-  sage green on the default dark palette, the same role the status line uses —
-  while the header total and project counters keep their muted spinner. Only a
-  running row is coloured; a finished conversation never keeps it.
+- **Running** — the session's agent is inside a turn. Row glyphs and each
+  project's counter use the chat's own braille spinner, frame for frame (80
+  ms), so they spin in lockstep. The header's running count is plain text: it
+  carries no spinner and stays still. A row whose agent is in **plan mode**
+  (the durable `plan/mode` selection written by `dsh-plan-mode`) spins in the
+  theme's plan colour — sage green on the default dark palette, the same role
+  the status line uses — while project counters keep their muted spinner. Only
+  a running row is coloured; a finished conversation never keeps it.
 - **Finished but unread** — a turn ended while you were in another session. The
   row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
   first few seconds.
@@ -322,8 +322,9 @@ atomicity/corruption, the jump failure matrix, the new-session decision table
 (`/new` vs workspace handoff vs `/bg`, refusals and thrown host calls), the
 workspace `+`/`n` affordance (including the hidden unknown-project case and
 the padded `+` after the counters), the
-animated running counters, the plan-mode spinner colour (row-only; header and
-project counters stay muted), the per-project cap on read rows (running and
+animated row glyphs and project counters (the header total is static), the
+plan-mode spinner colour (row-only; project counters stay muted), the
+per-project cap on read rows (running and
 unread exempt, attached row pinned), the right-pointing project glyph,
 hover-only row fill, and the
 panel/scene/command/shortcut registration (including feature-detected
