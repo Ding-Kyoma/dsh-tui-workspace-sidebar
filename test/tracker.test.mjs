@@ -146,6 +146,27 @@ test('finishing a turn anchors the row to its finish marker', () => {
   assert.equal(row.runningAt, 0);
 });
 
+test('triage order: an unread finish leads a running session, and trails once read', () => {
+  let clock = 1_000;
+  const a = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix a', 100), turnStart(100)] });
+  const b = makeAgent({ id: 'b', status: 'running', events: [promptEvent('fix b', 200), turnStart(200)] });
+  const { tracker, harness } = makeTracker({ agents: [a, b], clock: () => clock });
+
+  // Both running: the newer turn is on top.
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['b', 'a']);
+
+  // B finishes unread while A keeps running: the unread row leads.
+  clock = 2_000;
+  b.status = 'idle';
+  harness.emit('agent/status', { agent: b, status: 'idle' });
+  assert.equal(tracker.getSnapshot().unread, 1);
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['b', 'a']);
+
+  // Reading B drops it into the trailing class: running A leads now.
+  tracker.markSeen('b');
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['a', 'b']);
+});
+
 test('running -> idle becomes finished-unread and is persisted', () => {
   let clock = 1_000;
   const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });

@@ -9,9 +9,9 @@ project, one line per conversation, hover to highlight, click to jump.
 ```
 ⠋ 1 运行 · ● 1 未读
 ▾ dsh-plugins
-❯ ✓ 修复登录页样式            刚刚
-  ⠋ 给补丁跑个验证            2 分钟前
   ● 重写 README               5 分钟前
+  ⠋ 给补丁跑个验证            2 分钟前
+❯ ✓ 修复登录页样式            刚刚
 ▾ other-project
   ✓ 更新部署脚本              3 小时前
 ↑↓ 选择 · Enter 跳转 · m 已读 · r 刷新
@@ -40,14 +40,19 @@ panel has focus, and a tinted title keeps it findable otherwise. Its row is
 never filled; only the row under the mouse gets the highlight background. It is
 pinned regardless of age while you are in it.
 
-Inside a project, rows are ordered by when their **current state began**, not by
-their latest event: a running row is anchored to the start of its current turn,
-a finished row to the moment it finished. Activity inside a turn — tokens, tool
-calls, step markers, background job events — never reorders the list, so two
+Inside a project, rows are grouped by what wants attention first: **finished but
+unread** conversations lead, then **running** ones, then everything already dealt
+with (read finishes, which includes the attached conversation once its turn is
+over). Within a class rows are ordered by when their **current state began**, not
+by their latest event: a running row is anchored to the start of its current
+turn, a finished row to the moment it finished. Activity inside a turn — tokens,
+tool calls, step markers, background job events — never reorders the list, so two
 conversations running at the same time keep a fixed relative order instead of
 trading places on every event. A new turn lifts its row once, and an exact tie
-is broken running-first, then by session id. The relative time on the right
-still reports the last activity (it is also what the retention window uses).
+falls back to the session id. Projects follow the same class priority, so the
+first rows of the panel are always the ones that want attention. The relative
+time on the right still reports the last activity (it is also what the retention
+window uses).
 
 Everything else is hidden: idle sessions that never ran, subagents, and
 projects with nothing to triage. The attached session is never counted as
@@ -184,9 +189,10 @@ npm test        # node --test: model, tracker, store, discovery, jump, apply, st
 
 The tests cover the transition table (`running → finished → seen`), the
 retention window (visibility, pruning, next-expiry), the current-session rule
-(listed, pinned, never unread), the ordering anchor (running rows anchored to
-their turn start, finished rows to their finish marker, so concurrent running
-conversations never swap as their logs advance), subagent/no-prompt filtering,
-grouping, store atomicity/corruption, the jump failure matrix, the animated
-running counters and hover-only row fill, and the panel/scene/command/shortcut
-registration (including feature-detected degradation).
+(listed, pinned, never unread), the triage classes (unread, running, read) and
+the ordering anchor inside them (running rows anchored to their turn start,
+finished rows to their finish marker, so concurrent running conversations never
+swap as their logs advance), subagent/no-prompt filtering, grouping, store
+atomicity/corruption, the jump failure matrix, the animated running counters and
+hover-only row fill, and the panel/scene/command/shortcut registration
+(including feature-detected degradation).

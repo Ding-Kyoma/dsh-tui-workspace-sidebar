@@ -222,6 +222,29 @@ export function orderAtOf(row) {
 }
 
 /**
+ * Triage classes, in the order they are listed: finished-but-unread first,
+ * then running conversations, then everything already dealt with. Sorting is
+ * class-first; the anchor ({@link orderAtOf}) only breaks ties inside a class.
+ */
+export const RANK_UNREAD = 0;
+export const RANK_RUNNING = 1;
+export const RANK_DONE = 2;
+
+/**
+ * The triage class of a row. A failed finish is still a finish: it belongs in
+ * the unread class until it has been read or leaves the retention window.
+ *
+ * @param {any} row
+ * @returns {0 | 1 | 2}
+ */
+export function rankOf(row) {
+  if (!row || typeof row !== 'object') return RANK_DONE;
+  if (row.status === 'running') return RANK_RUNNING;
+  if (isUnread(row)) return RANK_UNREAD;
+  return RANK_DONE;
+}
+
+/**
  * @typedef {{currentId?: string, now?: number, retentionMs?: number}} ViewOptions
  */
 
@@ -462,8 +485,8 @@ export function visibleRows(rows, currentId, options = {}) {
  * running row is anchored to its turn start, a finished row to its finish
  * marker. Activity *inside* a turn never reorders the list, so two concurrent
  * conversations keep a fixed relative order instead of trading places on every
- * event. A running row wins an exact tie so a just-started conversation is not
- * buried under a just-finished one; the id keeps the order total otherwise.
+ * event. The id makes the order total when two rows share an anchor.
+ * This only orders rows that share a triage class — see {@link compareByTriage}.
  * @param {SidebarRow} left
  * @param {SidebarRow} right
  * @returns {number}
@@ -472,16 +495,30 @@ function compareByOrder(left, right) {
   const leftAt = orderAtOf(left);
   const rightAt = orderAtOf(right);
   if (leftAt !== rightAt) return rightAt - leftAt;
-  const leftRunning = left.status === 'running' ? 0 : 1;
-  const rightRunning = right.status === 'running' ? 0 : 1;
-  if (leftRunning !== rightRunning) return leftRunning - rightRunning;
   return String(left.id ?? '').localeCompare(String(right.id ?? ''));
 }
 
 /**
- * Group visible rows by project, newest state first inside each project.
- * Projects themselves keep the old ordering: a project with something running
- * leads, then by its freshest row — using the same anchor, so projects holding
+ * Class first, recency second: everything unread, then everything running,
+ * then the conversations already dealt with. Inside a class the anchor decides,
+ * so the two rules never fight each other.
+ * @param {SidebarRow} left
+ * @param {SidebarRow} right
+ * @returns {number}
+ */
+function compareByTriage(left, right) {
+  const leftRank = rankOf(left);
+  const rightRank = rankOf(right);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  return compareByOrder(left, right);
+}
+
+/**
+ * Group visible rows by project, triage class first and newest state second
+ * inside each project. Projects follow the same class priority — a project
+ * whose top row is unread leads, then one with a running conversation, then the
+ * rest — so the very first rows of the panel are always the ones that want
+ * attention. Within a class the same anchor is used, so projects holding
  * concurrent running conversations do not swap either.
  *
  * The attached session is listed too; it is simply never counted as unread.
@@ -525,7 +562,7 @@ export function buildGroups(rows, registry, currentId, options = {}) {
   }
 
   const projects = [...buckets.values()].map(bucket => {
-    const list = [...bucket.rows].sort(compareByOrder);
+    const list = [...bucket.rows].sort(compareByTriage);
     let running = 0;
     let unread = 0;
     for (const row of list) {
@@ -545,9 +582,9 @@ export function buildGroups(rows, registry, currentId, options = {}) {
   });
 
   projects.sort((left, right) => {
-    const leftRunning = left.running > 0 ? 0 : 1;
-    const rightRunning = right.running > 0 ? 0 : 1;
-    if (leftRunning !== rightRunning) return leftRunning - rightRunning;
+    const leftRank = left.rows.length > 0 ? rankOf(left.rows[0]) : RANK_DONE;
+    const rightRank = right.rows.length > 0 ? rankOf(right.rows[0]) : RANK_DONE;
+    if (leftRank !== rightRank) return leftRank - rightRank;
     const leftNewest = left.rows.length > 0 ? orderAtOf(left.rows[0]) : 0;
     const rightNewest = right.rows.length > 0 ? orderAtOf(right.rows[0]) : 0;
     if (leftNewest !== rightNewest) return rightNewest - leftNewest;

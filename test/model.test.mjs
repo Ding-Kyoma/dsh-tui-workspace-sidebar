@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_RETENTION_MS,
+  RANK_DONE,
+  RANK_RUNNING,
+  RANK_UNREAD,
   RUNNING_FRAMES,
   activityAt,
   applyRowState,
@@ -18,6 +21,7 @@ import {
   oneLine,
   orderAtOf,
   pruneRows,
+  rankOf,
   selectedRow,
   spinnerGlyph,
   windowTop,
@@ -194,7 +198,7 @@ test('applyRowState: without a turn marker the first sighting anchors to its las
   assert.equal(later.runningAt, 700, 'later events do not move the anchor');
 });
 
-test('buildGroups: lists the current conversation and recent read rows, newest state first', () => {
+test('buildGroups: lists the current conversation and recent read rows in triage order', () => {
   const registry = [{ path: '/repo/app/', title: 'App' }];
   const rows = [
     row({ id: 'run', status: 'running', finishedAt: 0, updatedAt: 300, title: 'Running', cwd: '/repo/app' }),
@@ -207,9 +211,47 @@ test('buildGroups: lists the current conversation and recent read rows, newest s
   assert.equal(result.running, 1);
   // The attached session is visible but never counted as unread.
   assert.equal(result.unread, 2);
-  assert.deepEqual(result.groups.map(group => group.title), ['App', 'other']);
-  assert.deepEqual(result.groups[0].rows.map(item => item.id), ['current', 'run', 'unread-old', 'read']);
-  assert.deepEqual(result.flatRows.map(item => item.id), ['current', 'run', 'unread-old', 'read', 'unread-new']);
+  // Unread leads even in the older project; inside a project the classes are
+  // unread, then running, then read, each newest-first.
+  assert.deepEqual(result.groups.map(group => group.title), ['other', 'App']);
+  assert.deepEqual(result.groups[1].rows.map(item => item.id), ['unread-old', 'run', 'current', 'read']);
+  assert.deepEqual(result.flatRows.map(item => item.id), ['unread-new', 'unread-old', 'run', 'current', 'read']);
+});
+
+test('rankOf: unread finish, then running, then everything already read', () => {
+  assert.equal(rankOf(row({ status: 'running', finishedAt: 0, seenAt: 0 })), RANK_RUNNING);
+  assert.equal(rankOf(row({ status: 'finished', finishedAt: 10, seenAt: 0 })), RANK_UNREAD);
+  assert.equal(rankOf(row({ status: 'finished', finishedAt: 10, seenAt: 10 })), RANK_DONE);
+  assert.equal(rankOf(row({ status: 'finished', failed: true, finishedAt: 10, seenAt: 0 })), RANK_UNREAD, 'a failed finish is still unread');
+  assert.equal(rankOf(undefined), RANK_DONE);
+  assert.equal(rankOf({}), RANK_DONE);
+});
+
+test('buildGroups: a class beats recency inside a project', () => {
+  const now = 30_000;
+  const rows = [
+    // The read row is the newest thing that happened, but it still goes last.
+    row({ id: 'read-newest', finishedAt: 29_000, updatedAt: 29_000, seenAt: 29_000 }),
+    // The running turn started before the unread finish; running still follows unread.
+    row({ id: 'running', status: 'running', runningAt: 20_000, finishedAt: 0, updatedAt: 28_000 }),
+    // The unread finish is the oldest event of the three, and still leads.
+    row({ id: 'unread-oldest', finishedAt: 10_000, updatedAt: 10_000, seenAt: 0 }),
+    row({ id: 'unread-newer', finishedAt: 15_000, updatedAt: 15_000, seenAt: 0 }),
+  ];
+  assert.deepEqual(
+    buildGroups(rows, [], '', { now }).flatRows.map(item => item.id),
+    ['unread-newer', 'unread-oldest', 'running', 'read-newest'],
+  );
+});
+
+test('buildGroups: projects follow the same class priority', () => {
+  const now = 30_000;
+  const rows = [
+    row({ id: 'read', cwd: '/repo/done', finishedAt: 29_000, updatedAt: 29_000, seenAt: 29_000 }),
+    row({ id: 'running', cwd: '/repo/busy', status: 'running', runningAt: 28_000, finishedAt: 0, updatedAt: 28_000 }),
+    row({ id: 'unread', cwd: '/repo/waiting', finishedAt: 10_000, updatedAt: 10_000, seenAt: 0 }),
+  ];
+  assert.deepEqual(buildGroups(rows, [], '', { now }).groups.map(group => group.title), ['waiting', 'busy', 'done']);
 });
 
 test('buildGroups: concurrent running rows keep their order while their activity moves', () => {
@@ -246,13 +288,13 @@ test('buildGroups: projects with running conversations keep a stable order', () 
   assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['two', 'one']);
 });
 
-test('buildGroups: an exact anchor tie is broken running-first, then by id', () => {
+test('buildGroups: an exact anchor tie falls back to the session id', () => {
   const now = 10_000;
   const rows = [
-    row({ id: 'b-finished', finishedAt: 2_000, updatedAt: 2_000, seenAt: 2_000 }),
-    row({ id: 'a-running', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 9_000 }),
+    row({ id: 'b', cwd: '/repo/app', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 2_000 }),
+    row({ id: 'a', cwd: '/repo/app', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 2_000 }),
   ];
-  assert.deepEqual(buildGroups(rows, [], '', { now }).flatRows.map(item => item.id), ['a-running', 'b-finished']);
+  assert.deepEqual(buildGroups(rows, [], '', { now }).flatRows.map(item => item.id), ['a', 'b']);
 });
 
 test('buildGroups: falls back to basename and keeps unknown directories together', () => {

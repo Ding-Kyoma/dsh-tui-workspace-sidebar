@@ -13,10 +13,12 @@
  * itself uses to describe a session; anything older than this process is not
  * visible to the plugin at all (dsh-tui 0.17.0 exposes no cross-process roster).
  *
- * Ordering is anchored to state changes, not to events. A running row is
- * anchored to its current `turn/start`; a finished row to its finish marker.
- * The fold still keeps the latest event time for the relative label and the
- * retention window, but that value never reorders two concurrent conversations.
+ * Ordering is class-first, then anchored to state changes rather than events.
+ * Rows are listed as unread finishes, then running conversations, then the ones
+ * already dealt with; inside a class a running row is anchored to its current
+ * `turn/start` and a finished row to its finish marker. The fold still keeps the
+ * latest event time for the relative label and the retention window, but that
+ * value never reorders two concurrent conversations.
  */
 
 import {
