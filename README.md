@@ -5,16 +5,15 @@ A light right-side panel for dsh-tui that answers one question at a glance:
 
 It uses a normal side-panel tab instead of a full-screen view: grouped by
 project, one line per conversation, hover to highlight, click to jump. A `+`
-at the right edge of a project header starts a fresh conversation in that
-workspace.
+after a project's counters starts a fresh conversation in that workspace.
 
 ```
 ⠋ 1 运行 · ● 1 未读
-▸ dsh-plugins ⠋1 ●1           +
+▸ dsh-plugins ⠋1 ●1 +
   ● 重写 README               5 分钟前
   ⠋ 给补丁跑个验证            2 分钟前
 ❯ ✓ 修复登录页样式            刚刚
-▸ other-project               +
+▸ other-project +
   ✓ 更新部署脚本              3 小时前
 ↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新
 ```
@@ -151,11 +150,12 @@ conversation you came from is still one click away until its window closes.
 
 ### New session from a workspace header
 
-`+` sits at the right edge of every project header, after the running/unread
-counters. Its cell is padded, so the click target is a little wider than the
-glyph; `n` does the same for the workspace of the selected row. The `+` is
-omitted for the "unknown project" bucket, which has no cwd to start a session
-in. Clicking it behaves like `/new` inside that workspace.
+`+` sits after the running/unread counters on every project header, to the
+right of all the header icons. Its cell is padded on both sides, so the click
+target is a little wider than the glyph; `n` does the same for the workspace of
+the selected row. The `+` is omitted for the "unknown project" bucket, which
+has no cwd to start a session in. Clicking it behaves like `/new` inside that
+workspace.
 
 | attached session | clicked workspace | what happens |
 | --- | --- | --- |
@@ -250,7 +250,7 @@ their turns advance), subagent/no-prompt filtering, grouping, store
 atomicity/corruption, the jump failure matrix, the new-session decision table
 (`/new` vs workspace handoff vs `/bg`, refusals and thrown host calls), the
 workspace `+`/`n` affordance (including the hidden unknown-project case and
-the right-aligned, padded `+`), the
+the padded `+` after the counters), the
 animated running counters, the plan-mode spinner colour (row-only; header and
 project counters stay muted), the per-project cap on read rows (running and
 unread exempt, attached row pinned), the right-pointing project glyph,

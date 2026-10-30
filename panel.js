@@ -279,13 +279,10 @@ export function createPanel(options) {
           ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, counts.join(' ')))
           : null,
         // The `+` starts a fresh conversation in this workspace, like `/new`
-        // in that cwd. The spacer parks it at the right edge (after the
-        // counters) and the padding widens its click target beyond the glyph.
-        // It stays outside the title Text so the click is its own hit target;
-        // the group header itself has no click action.
-        group.cwd !== ''
-          ? h(Box, { key: 'spacer', flexGrow: 1 })
-          : null,
+        // in that cwd. It sits right after the counters (the right of every
+        // header icon); the horizontal padding widens its click target beyond
+        // the glyph. It stays outside the title Text so the click is its own
+        // hit target; the group header itself has no click action.
         group.cwd !== ''
           ? h(
             Box,
