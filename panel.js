@@ -215,7 +215,7 @@ export function createPanel(options) {
           dimColor: !hovered,
           color: hovered ? 'accent' : undefined,
           wrap: 'truncate-end',
-        }, `▾ ${group.title || strings.unknownProject}`),
+        }, `▸ ${group.title || strings.unknownProject}`),
         counts.length > 0
           ? h(Box, { flexShrink: 0, marginLeft: 1 }, h(Text, { dimColor: true }, counts.join(' ')))
           : null,

@@ -248,3 +248,9 @@ test('panel: only a running plan-mode row spins in the plan colour', () => {
   assert.equal(counter.props.color, undefined);
   assert.equal(counter.props.dimColor, true);
 });
+
+test('panel: project headings use a right-pointing triangle', () => {
+  const lines = textLines(createHarness().render());
+  assert.ok(lines.includes('▸ dsh-plugins'), lines.join('\n'));
+  assert.ok(!lines.some(line => line.includes('▾')), lines.join('\n'));
+});
