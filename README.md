@@ -294,11 +294,16 @@ tool call is gone. A corrupt file is preserved as
   `user-questions/request` waterfall and yields to the host first. If a future
   host stops dispatching that event, the relay simply does nothing (the original
   `NO_PROVIDER` returns); it never patches dsh-tui.
-- **Temporary panel id.** The plugin ships without a `dsh-plugin.json`
-  manifest, so the host assigns a per-activation id
-  (`session:actN:inbox`). That id cannot be persisted; it is re-resolved from
-  `panels.list()` on every activation. Adding a verified manifest later would
-  make the id stable and unlock plugin storage/decision events.
+- **Panel id and the settings picker.** The package ships a `dsh-plugin.json`
+  (`id: workspace-sidebar`), so the host admits the activation and the panel
+  keeps the durable id `workspace-sidebar:inbox` across runs. Without that
+  manifest the id would be the anonymous `session:actN:inbox`, and the settings
+  picker would show "临时面板 #N · 仅本次运行，不保存" because it refuses to
+  persist an address no later run can honour (issue #1695 upstream). The id is
+  still re-resolved from `panels.list()` on every activation rather than
+  assumed. If your `sidePanel.panels` is an explicit list written before the
+  manifest existed, tick the inbox once in `/settings`; that choice now
+  persists.
 - **Transition card.** The full-screen flash is the only public-API path to a
   session switch in 0.17.0. If a direct `host.openSession`-style API appears,
   the panel will prefer it and keep the scene as a fallback.

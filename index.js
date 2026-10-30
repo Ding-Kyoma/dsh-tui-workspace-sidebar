@@ -14,9 +14,12 @@
  * - Everything is feature-detected and fail-open: a missing `agents`,
  *   `tuiPanels`, `tuiScenes`, `tuiWorkspaces`, `tuiPluginHost` or `commands`
  *   degrades that capability instead of failing the activation.
- * - The panel is registered without a `dsh-plugin.json` manifest, so its final
- *   id is temporary (`session:actN:inbox`) and cannot be persisted. The id is
- *   re-resolved from `panels.list()` on every activation.
+ * - The package ships a `dsh-plugin.json`, so the host admits this activation
+ *   and prefixes the panel with the manifest id (`workspace-sidebar:inbox`).
+ *   Without that manifest the id would be an anonymous `session:actN:inbox`,
+ *   which the settings picker refuses to persist (it has no durable identity).
+ *   The id is still re-resolved from `panels.list()` on every activation
+ *   instead of being assumed.
  */
 
 import { readAttachedSessionId } from './current.js';

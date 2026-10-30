@@ -29,6 +29,7 @@
     "current.js",
     "strings.js",
     "cordis.patch.yml",
+    "dsh-plugin.json",
     "README.md"
   ],
   "scripts": {
