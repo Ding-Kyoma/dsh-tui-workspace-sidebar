@@ -27,7 +27,10 @@ const ZH = {
   },
   liveUnavailable: '当前内核不提供实时会话状态，只显示磁盘上的记录',
   hintFocused: '↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新',
-  hintIdle: 'Ctrl+B 聚焦 · 点击行跳转 · + 新建',
+  // The host already draws `panel-hint-unfocused` ("Ctrl+B 聚焦侧栏") in the
+  // rule under every unfocused panel, so this footer must not repeat the key:
+  // it only advertises what the pointer can do from here.
+  hintIdle: '点击行跳转 · + 新建',
   header(running, unread, total, spinner = '⠋') {
     const parts = [];
     if (running > 0) parts.push(`${spinner} ${running} 运行`);
@@ -70,7 +73,7 @@ const EN = {
   },
   liveUnavailable: 'This kernel exposes no live session status; showing persisted records only',
   hintFocused: '↑↓ select · Enter jump · n new · m read · r refresh',
-  hintIdle: 'Ctrl+B to focus · click a row to jump · + new',
+  hintIdle: 'click a row to jump · + new',
   header(running, unread, total, spinner = '⠋') {
     const parts = [];
     if (running > 0) parts.push(`${spinner} ${running} running`);

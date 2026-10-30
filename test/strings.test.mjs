@@ -35,3 +35,14 @@ test('new-session copy exists in both languages and is advertised in the footer'
     assert.match(copy.hintIdle, /\+/, `${lang}.hintIdle mentions the + affordance`);
   }
 });
+
+test('the idle footer leaves the focus key to the host', () => {
+  // dsh-tui draws its own `panel-hint-unfocused` line ("Ctrl+B 聚焦侧栏") in
+  // the rule below an unfocused panel. The plugin footer sits directly above
+  // that rule, so advertising Ctrl+B there renders the same key twice.
+  for (const lang of ['zh', 'en']) {
+    const copy = messagesFor(lang);
+    assert.doesNotMatch(copy.hintIdle, /Ctrl\+B/i, `${lang}.hintIdle must not repeat the host focus hint`);
+    assert.doesNotMatch(copy.hintFocused, /Ctrl\+B/i, `${lang}.hintFocused must not repeat the host focus hint`);
+  }
+});
