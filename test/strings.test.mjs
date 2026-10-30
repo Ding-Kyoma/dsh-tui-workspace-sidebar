@@ -22,3 +22,16 @@ test('header: English copy keeps the same animated frame contract', () => {
   assert.equal(en.header(0, 0, 1, '⠏'), '1 conversation');
   assert.equal(en.header(0, 0, 0, '⠏'), 'nothing here yet');
 });
+
+test('new-session copy exists in both languages and is advertised in the footer', () => {
+  for (const lang of ['zh', 'en']) {
+    const copy = messagesFor(lang);
+    for (const key of ['newOpening', 'newUnavailable', 'newUnsupported', 'newBackgroundFailed', 'newError']) {
+      assert.equal(typeof copy[key], 'string', `${lang}.${key}`);
+      assert.ok(copy[key].length > 0, `${lang}.${key} is not empty`);
+    }
+    assert.match(copy.newError, /\{\{err\}\}/);
+    assert.match(copy.hintFocused, /n /, `${lang}.hintFocused mentions the key`);
+    assert.match(copy.hintIdle, /\+/, `${lang}.hintIdle mentions the + affordance`);
+  }
+});

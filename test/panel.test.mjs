@@ -40,10 +40,16 @@ function snapshot() {
  * A tiny fake React: enough state/refs to drive the panel without a renderer,
  * so the animation and highlight decisions stay unit-testable.
  */
-function createHarness(getSnapshot = snapshot) {
+function createHarness(getSnapshot = snapshot, options = {}) {
   const state = new Map();
+  const pendingEffects = [];
+  const requests = [];
+  const opened = [];
+  const toasts = [];
   let cursor = 0;
   let tick = 0;
+  let depth = 0;
+  let keyListener;
 
   const React = {
     createElement(type, props, ...children) {
@@ -63,17 +69,29 @@ function createHarness(getSnapshot = snapshot) {
       if (!state.has(index)) state.set(index, { current: value });
       return state.get(index);
     },
-    useEffect() {},
-    useSyncExternalStore(_subscribe, getSnapshot) {
-      return getSnapshot();
+    useEffect(fn) {
+      pendingEffects.push(fn);
+    },
+    useSyncExternalStore(_subscribe, getSnapshotFn) {
+      return getSnapshotFn();
     },
   };
 
   const host = {
     snapshot: () => ({ sessionId: 'cur', lang: 'zh' }),
-    toast() {},
-    openScene: () => true,
-    onKey: () => () => {},
+    toast(text) {
+      toasts.push(text);
+    },
+    openScene(id) {
+      opened.push(id);
+      return options.openScene === undefined ? true : options.openScene(id);
+    },
+    onKey(listener) {
+      keyListener = listener;
+      return () => {
+        if (keyListener === listener) keyListener = undefined;
+      };
+    },
   };
   const ui = {
     Box: 'Box',
@@ -89,18 +107,52 @@ function createHarness(getSnapshot = snapshot) {
     refreshWorkspaces() {},
     markSeen() {},
   };
-  const jump = { sceneId: 'jump', sceneReady: () => true, queue: { request() {}, clear() {} } };
+  const jump = {
+    sceneId: 'jump',
+    sceneReady: options.sceneReady ?? (() => true),
+    queue: {
+      request(target) {
+        requests.push(target);
+      },
+      clear() {
+        requests.length = 0;
+      },
+    },
+  };
   const component = createPanel({ tracker, config: { lang: 'zh' }, jump });
 
   function render() {
     cursor = 0;
-    return component({ React, ui, host, width: 40, height: 10, focused: true, visible: true });
+    depth += 1;
+    const tree = component({ React, ui, host, width: 40, height: 10, focused: true, visible: true });
+    depth -= 1;
+    if (depth === 0) {
+      // Mount effects once the tree is built, like React does after a commit.
+      while (pendingEffects.length > 0) pendingEffects.shift()();
+    }
+    return tree;
   }
 
   return {
     render,
     setTick(value) {
       tick = value;
+    },
+    requests,
+    opened,
+    toasts,
+    /** Deliver a focused-panel key event and return it (for defaultPrevented). */
+    press(input, key = {}) {
+      const event = {
+        input,
+        key,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+      };
+      keyListener?.(event);
+      return event;
     },
   };
 }
@@ -253,4 +305,67 @@ test('panel: project headings use a right-pointing triangle', () => {
   const lines = textLines(createHarness().render());
   assert.ok(lines.includes('▸ dsh-plugins'), lines.join('\n'));
   assert.ok(!lines.some(line => line.includes('▾')), lines.join('\n'));
+});
+
+test('panel: every real workspace header offers a + new-session target', () => {
+  const harness = createHarness();
+  const plus = findBox(harness.render(), 'new:/repo/app');
+  assert.ok(plus, 'the workspace header renders the + target');
+  assert.equal(textOf(plus), '+');
+
+  plus.props.onClick({ stopImmediatePropagation() {} });
+  assert.deepEqual(harness.requests, [
+    { kind: 'new', cwd: '/repo/app', label: 'dsh-plugins', lang: 'zh' },
+  ]);
+  assert.deepEqual(harness.opened, ['jump']);
+});
+
+test('panel: the + highlights on hover without filling the header', () => {
+  const harness = createHarness();
+  const plus = findBox(harness.render(), 'new:/repo/app');
+  assert.equal(directTexts(plus)[0].props.dimColor, true);
+
+  plus.props.onMouseEnter();
+  const hovered = findBox(harness.render(), 'new:/repo/app');
+  const text = directTexts(hovered)[0];
+  assert.equal(text.props.color, 'accent');
+  assert.equal(text.props.bold, true);
+  assert.equal(findBox(harness.render(), 'g:/repo/app').props.backgroundColor, undefined);
+
+  hovered.props.onMouseLeave();
+  assert.equal(directTexts(findBox(harness.render(), 'new:/repo/app'))[0].props.dimColor, true);
+});
+
+test('panel: a group without a cwd gets no +', () => {
+  const rows = [makeRow({ id: 'cur', cwd: '' })];
+  const harness = createHarness(() => ({
+    groups: [{ key: 'unknown', cwd: '', title: '', running: 0, unread: 0, rows }],
+    running: 0,
+    unread: 0,
+    flatRows: rows,
+    currentId: 'cur',
+    agentsAvailable: true,
+    version: 1,
+  }));
+  assert.equal(findBox(harness.render(), 'new:unknown'), undefined);
+});
+
+test('panel: clicking + without a scene toasts instead of queueing', () => {
+  const harness = createHarness(snapshot, { sceneReady: () => false });
+  const plus = findBox(harness.render(), 'new:/repo/app');
+  plus.props.onClick({ stopImmediatePropagation() {} });
+  assert.deepEqual(harness.requests, []);
+  assert.equal(harness.toasts.length, 1);
+  assert.ok(harness.toasts[0].includes('场景'), harness.toasts[0]);
+});
+
+test('panel: n creates a session in the selected row workspace', () => {
+  const harness = createHarness();
+  harness.render();
+  const event = harness.press('n');
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(harness.requests, [
+    { kind: 'new', cwd: '/repo/app', label: 'dsh-plugins', lang: 'zh' },
+  ]);
+  assert.deepEqual(harness.opened, ['jump']);
 });

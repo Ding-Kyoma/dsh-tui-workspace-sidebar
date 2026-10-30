@@ -4,17 +4,18 @@ A light right-side panel for dsh-tui that answers one question at a glance:
 **what is running, what finished while I was not looking, and where am I?**
 
 It uses a normal side-panel tab instead of a full-screen view: grouped by
-project, one line per conversation, hover to highlight, click to jump.
+project, one line per conversation, hover to highlight, click to jump. A `+`
+after a project title starts a fresh conversation in that workspace.
 
 ```
 ⠋ 1 运行 · ● 1 未读
-▸ dsh-plugins
+▸ dsh-plugins +
   ● 重写 README               5 分钟前
   ⠋ 给补丁跑个验证            2 分钟前
 ❯ ✓ 修复登录页样式            刚刚
-▸ other-project
+▸ other-project +
   ✓ 更新部署脚本              3 小时前
-↑↓ 选择 · Enter 跳转 · m 已读 · r 刷新
+↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新
 ```
 
 ## What it shows
@@ -108,18 +109,22 @@ capped at 720 (30 days). The row cap of 300 stays as a hard bound.
 | --- | --- |
 | hover a row | fill it (transient; selecting a row does not fill it) |
 | click a row | jump to that workspace + session |
+| click a project's `+` | start a fresh conversation in that workspace (see below) |
 | `↑` / `↓` | move the selection (while the panel is focused) |
 | `Enter` | jump to the selected conversation |
+| `n` | start a fresh conversation in the selected row's workspace |
 | `m` | mark the selected finished row as read (the row stays, dimmed) |
 | `r` | refresh the agent roster and workspace titles |
 | wheel | scroll the list |
 
-## How the jump works
+## How a switch works
 
-A plugin panel gets no `channel`, so it cannot call `channel.resumeTo` itself.
-The only public seam that hands a plugin a live channel is a registered scene.
-The panel therefore leaves a one-shot target in a queue and opens a small
-transition scene; that scene performs the resume and closes.
+A plugin panel gets no `channel`, so it cannot call `channel.resumeTo` or
+`channel.switchWorkspace` itself. The only public seam that hands a plugin a
+live channel is a registered scene. The panel therefore leaves a one-shot
+target in a queue and opens a small transition scene; that scene performs the
+action and closes. A row click queues a resume; a project's `+` (or `n`) queues
+a new-session request.
 
 The panel and the scene are registered from **one** injected context on
 purpose. dsh-tui attributes resource ownership to the calling activation
@@ -130,7 +135,7 @@ activation") even though `sceneReady()` is true. One injection for both
 (`['tuiPanels', 'tuiScenes']`) keeps the owners identical.
 
 Expect a brief full-screen card (`▣ project / title / 正在打开会话…`) for the
-duration of the resume. It is a trampoline, not a second inbox; there is no
+duration of a jump. It is a trampoline, not a second inbox; there is no
 workspace list there.
 
 Failure reasons are mapped to toasts and the row stays unread: `occupied`
@@ -138,6 +143,29 @@ Failure reasons are mapped to toasts and the row stays unread: `occupied`
 `cancelled`, `failed`, `unavailable` (the adapter already toasts this one).
 A successful jump marks the row read but keeps it in the list, so the
 conversation you came from is still one click away until its window closes.
+
+### New session from a workspace header
+
+`+` sits immediately after each project title. It is omitted for the
+"unknown project" bucket, which has no cwd to start a session in. Clicking it
+behaves like `/new` inside that workspace; `n` does the same for the workspace
+of the selected row.
+
+| attached session | clicked workspace | what happens |
+| --- | --- | --- |
+| idle | the attached one | `/new` (`channel.newSession()`) |
+| idle | another one | workspace handoff (`channel.switchWorkspace()`) |
+| running a turn | the attached one | `/bg` first (`channel.backgroundCurrent()`); the fresh session it creates is already in that cwd |
+| running a turn | another one | `/bg`, then the workspace handoff on the now-idle fresh session |
+
+A running turn is never killed: it keeps going as a background session and
+stays listed with its spinner. An idle session is replaced `/new`-style, and
+its row stays in the list as a read finish. The fresh conversation itself joins
+the list once it has a prompt (never-prompted idle sessions stay hidden, as
+before). When the host refuses (a turn started in between, the directory
+disappeared, the handoff failed) the channel's own notice explains why and the
+card closes. A kernel that exposes neither `newSession` nor `switchWorkspace`
+gets "当前内核不支持新建会话".
 
 ## Persistence
 
@@ -184,6 +212,13 @@ an empty state is used.
 - **Transition card.** The full-screen flash is the only public-API path to a
   session switch in 0.17.0. If a direct `host.openSession`-style API appears,
   the panel will prefer it and keep the scene as a fallback.
+- **New sessions need the scene too.** `+` and `n` use the same registered
+  scene; without `tuiScenes` they toast "无法新建：场景服务不可用" and do
+  nothing. Backgrounding a running turn creates its fresh session in the cwd
+  being left, so a cross-workspace `+` hands off once more; the intermediate
+  session is disposed immediately and (per the host's fresh-session policy) is
+  not written to disk, though the host's workspace ledger may briefly record
+  its id.
 - **Non-DSH kernels.** A kernel that does not provide the `agents` service
   (for example the Claude/Codex adapters) gets recent rows from disk only; the
   panel says so instead of pretending to be live.
@@ -205,9 +240,12 @@ retention window (visibility, pruning, next-expiry), the current-session rule
 the ordering anchor inside them (running rows anchored to their turn start,
 finished rows to their finish marker, so concurrent running conversations never
 swap as their logs advance), subagent/no-prompt filtering, grouping, store
-atomicity/corruption, the jump failure matrix, the animated running counters,
-the plan-mode spinner colour (row-only; header and project counters stay
-muted), the per-project cap on read rows (running and unread exempt, attached
-row pinned), the right-pointing project glyph, hover-only row fill, and the
+atomicity/corruption, the jump failure matrix, the new-session decision table
+(`/new` vs workspace handoff vs `/bg`, refusals and thrown host calls), the
+workspace `+`/`n` affordance (including the hidden unknown-project case), the
+animated running counters, the plan-mode spinner colour (row-only; header and
+project counters stay muted), the per-project cap on read rows (running and
+unread exempt, attached row pinned), the right-pointing project glyph,
+hover-only row fill, and the
 panel/scene/command/shortcut registration (including feature-detected
 degradation).
