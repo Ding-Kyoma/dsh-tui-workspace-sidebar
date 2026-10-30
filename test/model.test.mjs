@@ -18,6 +18,7 @@ import {
   oneLine,
   pruneRows,
   selectedRow,
+  spinnerGlyph,
   windowTop,
 } from '../model.js';
 
@@ -247,6 +248,15 @@ test('glyphFor: spinner for running, dot for unread, dim check once read, cross 
   assert.deepEqual(glyphFor(row({ seenAt: 2_000 }), 0), { char: '✓', color: 'success', dim: true });
   assert.deepEqual(glyphFor(row({ failed: true }), 0), { char: '✕', color: 'error', dim: false });
   assert.deepEqual(glyphFor(row({ failed: true, seenAt: 2_000 }), 0), { char: '✕', color: 'error', dim: true });
+});
+
+test('spinnerGlyph: every running count shares one frame and junk settles on the first', () => {
+  assert.equal(spinnerGlyph(0), RUNNING_FRAMES[0]);
+  assert.equal(spinnerGlyph(5), RUNNING_FRAMES[5]);
+  assert.equal(spinnerGlyph(RUNNING_FRAMES.length), RUNNING_FRAMES[0]);
+  assert.equal(spinnerGlyph(-1), RUNNING_FRAMES[1]);
+  assert.equal(spinnerGlyph(Number.NaN), RUNNING_FRAMES[0]);
+  assert.equal(spinnerGlyph(Number.POSITIVE_INFINITY), RUNNING_FRAMES[0]);
 });
 
 test('formatWhen: relative labels and a clock-safe fallback', () => {

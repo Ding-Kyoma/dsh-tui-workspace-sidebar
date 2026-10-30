@@ -28,9 +28,9 @@ const ZH = {
   liveUnavailable: '当前内核不提供实时会话状态，只显示磁盘上的记录',
   hintFocused: '↑↓ 选择 · Enter 跳转 · m 已读 · r 刷新',
   hintIdle: 'Ctrl+B 聚焦 · 点击行跳转',
-  header(running, unread, total) {
+  header(running, unread, total, spinner = '⠋') {
     const parts = [];
-    if (running > 0) parts.push(`⠋ ${running} 运行`);
+    if (running > 0) parts.push(`${spinner} ${running} 运行`);
     if (unread > 0) parts.push(`● ${unread} 未读`);
     if (parts.length > 0) return parts.join(' · ');
     return total > 0 ? `共 ${total} 个会话` : '暂无会话';
@@ -66,9 +66,9 @@ const EN = {
   liveUnavailable: 'This kernel exposes no live session status; showing persisted records only',
   hintFocused: '↑↓ select · Enter jump · m read · r refresh',
   hintIdle: 'Ctrl+B to focus · click a row to jump',
-  header(running, unread, total) {
+  header(running, unread, total, spinner = '⠋') {
     const parts = [];
-    if (running > 0) parts.push(`⠋ ${running} running`);
+    if (running > 0) parts.push(`${spinner} ${running} running`);
     if (unread > 0) parts.push(`● ${unread} unread`);
     if (parts.length > 0) return parts.join(' · ');
     return total > 0 ? `${total} conversation${total === 1 ? '' : 's'}` : 'nothing here yet';

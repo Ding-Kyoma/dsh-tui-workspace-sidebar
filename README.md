@@ -24,7 +24,9 @@ Three kinds of conversations, across every workspace that is live in this TUI
 process:
 
 - **Running** — the session's agent is inside a turn. The braille spinner is
-  the chat's own spinner, frame for frame (80 ms).
+  the chat's own spinner, frame for frame (80 ms). The header's running count
+  and each project's counter drive the same frames, so all three spin in
+  lockstep.
 - **Finished but unread** — a turn ended while you were in another session. The
   row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
   first few seconds.
@@ -34,8 +36,10 @@ process:
 
 A finished conversation — read or unread — is swept once it has been idle for
 **6 hours** (`retentionHours`, configurable). The attached conversation is
-always listed and is the default selection, highlighted as soon as the panel
-opens; it is pinned regardless of age while you are in it.
+always listed and is the default selection: a `❯` cursor marks it while the
+panel has focus, and a tinted title keeps it findable otherwise. Its row is
+never filled; only the row under the mouse gets the highlight background. It is
+pinned regardless of age while you are in it.
 
 Inside a project, rows are ordered by their last activity — the relative time
 printed on the right: newest first, with a running row winning a timestamp tie.
@@ -80,7 +84,7 @@ capped at 720 (30 days). The row cap of 300 stays as a hard bound.
 
 | Input | Action |
 | --- | --- |
-| hover a row | highlight it |
+| hover a row | fill it (transient; selecting a row does not fill it) |
 | click a row | jump to that workspace + session |
 | `↑` / `↓` | move the selection (while the panel is focused) |
 | `Enter` | jump to the selected conversation |
@@ -177,12 +181,13 @@ search, filtering and a workspace rail. Only one is needed.
 ## Tests
 
 ```sh
-npm test        # node --test: model, tracker, store, discovery, jump, apply
+npm test        # node --test: model, tracker, store, discovery, jump, apply, strings, panel
 ```
 
 The tests cover the transition table (`running → finished → seen`), the
 retention window (visibility, pruning, next-expiry), the current-session rule
 (listed, pinned, never unread), activity ordering, subagent/no-prompt
-filtering, grouping, store atomicity/corruption, the jump failure matrix, and
-the panel/scene/command/shortcut registration (including feature-detected
+filtering, grouping, store atomicity/corruption, the jump failure matrix, the
+animated running counters and hover-only row fill, and the
+panel/scene/command/shortcut registration (including feature-detected
 degradation).

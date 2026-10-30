@@ -507,11 +507,6 @@ export function buildGroups(rows, registry, currentId, options = {}) {
 }
 
 /**
- * @param {SidebarRow} row
- * @param {number} frame
- * @returns {{char: string, color: string | undefined, dim: boolean}}
- */
-/**
  * Which row the panel highlights.
  *
  * The explicit selection wins while the person is navigating; otherwise the
@@ -539,6 +534,22 @@ export function selectedRow(rows, selectedId, currentId) {
 }
 
 /**
+ * The chat's spinner for a given animation frame.
+ *
+ * Every place that counts a running turn — the row glyph, the project counter
+ * and the header — goes through this helper, so they spin in lockstep and a
+ * hard-coded first frame cannot creep back in. Junk frames (NaN, negative,
+ * huge) settle on a valid frame instead of rendering `undefined`.
+ *
+ * @param {number} frame
+ * @returns {string}
+ */
+export function spinnerGlyph(frame) {
+  const index = Number.isFinite(frame) ? Math.abs(Math.floor(frame)) % RUNNING_FRAMES.length : 0;
+  return RUNNING_FRAMES[index];
+}
+
+/**
  * The inbox's glyph vocabulary, shared with the old full-screen inbox:
  * the chat's own spinner while running; a solid dot for a finished turn nobody
  * has looked at yet; the dimmed checkmark once it has been read; a cross for a
@@ -550,8 +561,7 @@ export function selectedRow(rows, selectedId, currentId) {
  */
 export function glyphFor(row, frame) {
   if (row?.status === 'running') {
-    const index = Number.isFinite(frame) ? Math.abs(Math.floor(frame)) % RUNNING_FRAMES.length : 0;
-    return { char: RUNNING_FRAMES[index], color: 'suggestion', dim: false };
+    return { char: spinnerGlyph(frame), color: 'suggestion', dim: false };
   }
   if (!isUnread(row)) {
     return row?.failed

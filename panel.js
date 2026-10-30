@@ -9,7 +9,7 @@
  * selection, so the highlight says where you are before you move it.
  */
 
-import { FRESH_FINISH_MS, RUNNING_FRAME_MS, RUNNING_FRAMES, formatWhen, glyphFor, selectedRow } from './model.js';
+import { FRESH_FINISH_MS, RUNNING_FRAME_MS, RUNNING_FRAMES, formatWhen, glyphFor, selectedRow, spinnerGlyph } from './model.js';
 import { messagesFor, resolveLang } from './strings.js';
 
 /**
@@ -52,6 +52,9 @@ export function createPanel(options) {
     const running = data.running > 0;
     const tick = ui.useAnimationTime(running ? RUNNING_FRAME_MS : 1000);
     const frame = Math.floor(tick / RUNNING_FRAME_MS) % RUNNING_FRAMES.length;
+    // One spinner character for the header, the project counters and the rows,
+    // so every running count animates in lockstep instead of freezing on ⠋.
+    const spinner = spinnerGlyph(frame);
     const now = Date.now();
     const showTime = width >= 30;
     const showHeader = height >= 3;
@@ -195,7 +198,7 @@ export function createPanel(options) {
     function renderGroup(group) {
       const hovered = hoverId === `g:${group.key}`;
       const counts = [];
-      if (group.running > 0) counts.push(`⠋${group.running}`);
+      if (group.running > 0) counts.push(`${spinner}${group.running}`);
       if (group.unread > 0) counts.push(`●${group.unread}`);
       return h(
         Box,
@@ -221,8 +224,12 @@ export function createPanel(options) {
 
     function renderRow(row) {
       const isSelected = selected?.id === row.id;
+      const isCurrent = row.id === data.currentId;
       const isHovered = hoverId === row.id;
-      const highlighted = isSelected || isHovered;
+      // The attached conversation and the keyboard selection are marked with
+      // colour and the cursor, never a permanent fill: the loudest row on
+      // screen should be the one under the mouse, not the one you are reading.
+      const emphasized = isSelected || isCurrent;
       const fresh = row.status === 'finished' && now - row.finishedAt < FRESH_FINISH_MS;
       const glyph = glyphFor(row, frame);
       const when = showTime ? formatWhen(row.updatedAt, now, lang) : '';
@@ -233,7 +240,7 @@ export function createPanel(options) {
           height: 1,
           flexDirection: 'row',
           flexShrink: 0,
-          backgroundColor: highlighted ? 'userMessageBackgroundHover' : undefined,
+          backgroundColor: isHovered ? 'userMessageBackgroundHover' : undefined,
           onMouseEnter: () => setHoverId(row.id),
           onMouseLeave: () => setHoverId(current => (current === row.id ? null : current)),
           onClick: event => {
@@ -242,14 +249,14 @@ export function createPanel(options) {
           },
         },
         h(Box, { width: 2, flexShrink: 0 }, h(Text, { color: focused && isSelected ? 'accent' : undefined }, focused && isSelected ? '❯' : ' ')),
-        h(Text, { color: glyph.color, bold: fresh || highlighted, dimColor: glyph.dim }, glyph.char),
+        h(Text, { color: glyph.color, bold: emphasized || fresh, dimColor: glyph.dim }, glyph.char),
         h(Text, null, ' '),
         h(
           Box,
           { flexGrow: 1, flexShrink: 1, minWidth: 0 },
           h(Text, {
-            bold: highlighted || fresh,
-            color: highlighted ? 'accent' : undefined,
+            bold: emphasized || fresh,
+            color: emphasized ? 'accent' : undefined,
             wrap: 'truncate-end',
           }, row.title || strings.untitled),
         ),
@@ -286,7 +293,7 @@ export function createPanel(options) {
       Box,
       { flexDirection: 'column', flexGrow: 1, width: '100%', overflow: 'hidden' },
       showHeader
-        ? h(Box, { height: 1, flexShrink: 0 }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length)))
+        ? h(Box, { height: 1, flexShrink: 0 }, h(Text, { dimColor: true, wrap: 'truncate-end' }, strings.header(data.running, data.unread, data.flatRows.length, spinner)))
         : null,
       body,
       showFooter
