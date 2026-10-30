@@ -29,6 +29,16 @@ import {
 import { messagesFor, resolveLang } from './strings.js';
 
 /**
+ * One wheel notch moves one conversation row.
+ *
+ * dsh-tui reports a notch as three terminal rows (`deltaY = ±3`), because a
+ * transcript line is the unit there. A sidebar row is one conversation, so the
+ * same notch should walk one row; scaling by the delta would scroll three
+ * conversations per mouse notch and turn a trackpad flick into a jump.
+ */
+const WHEEL_ROWS = 1;
+
+/**
  * @param {{
  *   tracker: any,
  *   config: {lang?: 'zh' | 'en' | 'auto'},
@@ -57,7 +67,6 @@ export function createPanel(options) {
     // clear the group's highlight and, because hover does not bubble, the
     // parent would not re-enter when the pointer moves from `+` to the title.
     const [plusHoverKey, setPlusHoverKey] = React.useState(null);
-    const [top, setTop] = React.useState(0);
 
     const showHeader = height >= 3;
     const showFooter = height >= 4;
@@ -132,14 +141,46 @@ export function createPanel(options) {
     }
     const focusIndex = Math.max(0, items.findIndex(item => item.type === 'row' && item.row?.id === selected?.id));
     const maxTop = Math.max(0, items.length - capacity);
+    // Start on the conversation now on screen instead of painting the top of
+    // the list and letting the follow effect jump down one commit later.
+    const [top, setTop] = React.useState(() => {
+      if (items.length === 0) return 0;
+      return focusIndex >= capacity
+        ? Math.max(0, Math.min(maxTop, focusIndex - capacity + 1))
+        : 0;
+    });
     const safeTop = Math.max(0, Math.min(top, maxTop));
 
+    // Keep the highlighted row visible when the highlight itself moves (the
+    // keyboard, a jump, or the attached session changing) or when the panel
+    // height changes. Wheel scrolling must NOT run this: `top` is the window
+    // the person is browsing, and the old effect also depended on `safeTop`,
+    // so every notch was scrolled back to the selection on the next commit —
+    // the list bounced in place instead of scrolling.
+    const followed = React.useRef({ id: null, capacity: -1 });
     React.useEffect(() => {
-      if (items.length === 0) return;
-      if (focusIndex < safeTop) setTop(focusIndex);
-      else if (focusIndex >= safeTop + capacity) setTop(Math.max(0, focusIndex - capacity + 1));
-      // `items` is rebuilt each render; the numeric inputs are the real deps.
-    }, [focusIndex, safeTop, capacity, items.length]);
+      if (items.length === 0) {
+        followed.current = { id: null, capacity };
+        return;
+      }
+      const previous = followed.current;
+      if (previous.id === selected?.id && previous.capacity === capacity) return;
+      followed.current = { id: selected?.id, capacity };
+      setTop(current => {
+        const base = Math.max(0, Math.min(current, maxTop));
+        if (focusIndex < base) return focusIndex;
+        if (focusIndex >= base + capacity) return Math.max(0, focusIndex - capacity + 1);
+        return current;
+      });
+    }, [focusIndex, selected?.id, capacity, maxTop, items.length]);
+
+    // Rendering already clamps (`safeTop`), but a stale offset past the end
+    // would swallow the first wheel-up notches after the list shrinks or the
+    // panel grows. Keep the stored position honest.
+    React.useEffect(() => {
+      if (top <= maxTop) return;
+      setTop(maxTop);
+    }, [top, maxTop]);
 
     function move(delta) {
       const list = viewRef.current.flatRows;
@@ -401,9 +442,10 @@ export function createPanel(options) {
           overflow: 'hidden',
           onWheel: event => {
             event?.stopImmediatePropagation?.();
-            const delta = event?.deltaY > 0 ? 3 : event?.deltaY < 0 ? -3 : 0;
-            if (delta === 0) return;
-            setTop(current => Math.max(0, Math.min(maxTop, current + delta)));
+            const delta = Number(event?.deltaY);
+            if (!Number.isFinite(delta) || delta === 0) return;
+            const step = delta > 0 ? WHEEL_ROWS : -WHEEL_ROWS;
+            setTop(current => Math.max(0, Math.min(maxTop, current + step)));
           },
         },
         items.slice(safeTop, safeTop + capacity).map(item => (item.type === 'header' ? renderGroup(item.group) : renderRow(item.row))),

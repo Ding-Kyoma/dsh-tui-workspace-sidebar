@@ -195,6 +195,19 @@ function createHarness(getSnapshot = snapshot, options = {}) {
       keyListener?.(event);
       return event;
     },
+    /**
+     * Deliver one wheel notch over the list body. The host reports a notch as
+     * `deltaY = ±3` terminal rows; the panel is expected to treat it as one
+     * conversation row, so tests pass the host value, not a row count.
+     */
+    wheel(deltaY) {
+      const tree = render();
+      const body = findWheelBox(tree);
+      assert.ok(body, 'the list body handles wheel events');
+      const event = { deltaY, stopImmediatePropagation() {} };
+      body.props.onWheel(event);
+      return event;
+    },
   };
 }
 
@@ -232,6 +245,24 @@ function findBox(node, key) {
   if (node.type === 'Box' && node.props?.key === key) return node;
   for (const child of node.children ?? []) {
     const hit = findBox(child, key);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+/** The list body is the only Box in the panel that handles the wheel. */
+function findWheelBox(node) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findWheelBox(child);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  }
+  if (node.type === 'Box' && typeof node.props?.onWheel === 'function') return node;
+  for (const child of node.children ?? []) {
+    const hit = findWheelBox(child);
     if (hit !== undefined) return hit;
   }
   return undefined;
@@ -584,4 +615,93 @@ test('panel: keyboard movement stays inside the folded view', () => {
   for (const hidden of ['p0-done-4', 'p0-done-0', 'p1-done-4', 'p1-done-0']) {
     assert.notEqual(target, hidden, 'a folded row can never be selected');
   }
+});
+
+test('panel: an overflowing list opens on the attached conversation', () => {
+  // Ten projects at the three-row floor overflow twelve body lines, and the
+  // attached conversation is five projects down. Its window must be the first
+  // frame, not a top-of-list paint followed by a follow-up commit.
+  const fixture = manyDoneSnapshot({ projects: 10, current: 'p5-done-9' });
+  const tree = createHarness(() => fixture, { height: 14 }).render();
+  assert.ok(findBox(tree, 'p5-done-9'), 'the attached row is in the first frame');
+  assert.ok(findBox(tree, 'g:/repo/p5'), 'its project header is in the first frame');
+  assert.equal(findBox(tree, 'g:/repo/p0'), undefined, 'the window did not start at the top');
+});
+
+test('panel: one wheel notch moves the list one row', () => {
+  const fixture = manyDoneSnapshot({ projects: 10 });
+  const harness = createHarness(() => fixture, { height: 14 });
+  harness.render();
+  harness.wheel(3); // the host reports a notch as ±3 terminal rows
+  const tree = harness.render();
+  assert.equal(findBox(tree, 'g:/repo/p0'), undefined, 'the first header scrolled off');
+  assert.ok(findBox(tree, 'p0-done-9'), 'one row, not three: the first conversation is still visible');
+  assert.ok(findBox(tree, 'g:/repo/p1'), 'the window moved into the second project');
+});
+
+test('panel: repeated wheel notches keep scrolling instead of snapping back', () => {
+  const fixture = manyDoneSnapshot({ projects: 10 });
+  const harness = createHarness(() => fixture, { height: 14 });
+  harness.render();
+  for (let index = 0; index < 5; index += 1) harness.wheel(3);
+  const tree = harness.render();
+  assert.equal(findBox(tree, 'g:/repo/p1'), undefined, 'five notches cleared the first projects');
+  assert.ok(findBox(tree, 'g:/repo/p2'), 'the window kept moving through the list');
+  assert.ok(findBox(tree, 'g:/repo/p4'), 'all five rows were applied, not just the first');
+  assert.equal(findBox(tree, 'p0-done-9'), undefined);
+});
+
+test('panel: the wheel clamps at both ends of the list', () => {
+  const fixture = manyDoneSnapshot({ projects: 10 });
+  const harness = createHarness(() => fixture, { height: 14 });
+  for (let index = 0; index < 100; index += 1) harness.wheel(3);
+  let tree = harness.render();
+  assert.ok(findBox(tree, 'g:/repo/p9'), 'the last project is on screen');
+  assert.ok(findBox(tree, 'p9-done-7'), 'the last kept row is visible at the bottom');
+  harness.wheel(3);
+  tree = harness.render();
+  assert.ok(findBox(tree, 'p9-done-7'), 'scrolling past the end is a no-op');
+  harness.wheel(-3);
+  tree = harness.render();
+  assert.equal(findBox(tree, 'p9-done-7'), undefined, 'one notch up leaves the bottom');
+  assert.ok(findBox(tree, 'p9-done-8'));
+});
+
+test('panel: keyboard movement returns the selection to the window after scrolling', () => {
+  const fixture = manyDoneSnapshot({ projects: 10 });
+  const harness = createHarness(() => fixture, { height: 14 });
+  harness.render();
+  for (let index = 0; index < 10; index += 1) harness.wheel(3);
+  assert.equal(findBox(harness.render(), 'p0-done-9'), undefined, 'the attached row scrolled away');
+  harness.press('', { downArrow: true });
+  const tree = harness.render();
+  assert.ok(findBox(tree, 'p0-done-8'), 'the newly selected row is brought back into view');
+  assert.equal(findBox(tree, 'g:/repo/p0'), undefined, 'the window follows the highlight, not the list top');
+});
+
+test('panel: wheel scrolling does not move the selection', () => {
+  const fixture = manyDoneSnapshot({ projects: 10 });
+  const harness = createHarness(() => fixture, { height: 14 });
+  harness.render();
+  harness.press('', { downArrow: true }); // p0-done-8, not the attached conversation
+  harness.wheel(3);
+  harness.wheel(3);
+  harness.press('', { return: true });
+  assert.deepEqual(harness.requests.map(item => item.id), ['p0-done-8']);
+});
+
+test('panel: a shrinking list clamps the stored scroll offset', () => {
+  let fixture = manyDoneSnapshot({ projects: 10 });
+  const harness = createHarness(() => fixture, { height: 14 });
+  for (let index = 0; index < 100; index += 1) harness.wheel(3);
+  assert.ok(findBox(harness.render(), 'p9-done-7'), 'scrolled to the end of the long list');
+
+  fixture = manyDoneSnapshot({ projects: 5 });
+  let tree = harness.render();
+  assert.ok(findBox(tree, 'g:/repo/p4'), 'the shorter list renders');
+  assert.equal(findBox(tree, 'p9-done-7'), undefined);
+
+  harness.wheel(-3);
+  tree = harness.render();
+  assert.ok(findBox(tree, 'p1-done-7'), 'the first wheel-up moves immediately, not inside a dead zone');
 });

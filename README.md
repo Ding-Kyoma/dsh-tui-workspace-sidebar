@@ -102,6 +102,12 @@ unread (no badge for the conversation already on screen). A waiting row is also
 never swept by the retention window — the question is still waiting for an
 answer, so its green dot stays until the tool call settles.
 
+When the list overflows, the wheel scrolls the window one conversation per
+notch instead of moving the selection: a flick can take the attached row off
+screen, and `↑`/`↓` brings the highlight back into view. The panel opens on the
+attached conversation, so the first frame already shows where you are even when
+that row sits deep in the list.
+
 ## Install
 
 ```sh
@@ -153,7 +159,7 @@ host already handles those questions itself, or if you want the old immediate
 | `n` | start a fresh conversation in the selected row's workspace |
 | `m` | mark the selected finished row as read (the row stays, dimmed) |
 | `r` | refresh the agent roster and workspace titles |
-| wheel | scroll the list |
+| wheel | scroll the list one conversation per notch (the selection stays put; `↑`/`↓` brings it back) |
 
 ## How a switch works
 
