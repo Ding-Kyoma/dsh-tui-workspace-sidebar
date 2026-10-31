@@ -1,10 +1,10 @@
 # Workspace sidebar for dsh-tui.
 #
-# Install (npm, once published):
+# Install (npm):
 #   dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar
 #
-# Until the npm release, install from a checkout:
-#   npm install
+# Development from a checkout:
+#   npm ci
 #   dsh plugin --profile dsh-tui add link:$PWD
 #
 # The CLI adds the package to the profile's dependencies and, because this

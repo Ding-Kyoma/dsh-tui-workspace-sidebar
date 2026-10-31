@@ -1,6 +1,7 @@
 # dsh-tui-workspace-sidebar
 
 [![CI](https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/dsh-tui-workspace-sidebar.svg)](https://www.npmjs.com/package/dsh-tui-workspace-sidebar)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
@@ -10,9 +11,9 @@ A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 This is a community plugin, not an official dsh-TUI component. It is built
 against dsh-TUI 0.17.0 and uses only public host seams.
 
-> **Status:** pre-release. The npm package is not published yet; use the
-> checkout install below. The tag-driven publish workflow is ready for the
-> eventual `v*` release.
+> **Status:** published as `dsh-tui-workspace-sidebar@0.1.0`. Install with
+> `dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar`; the checkout
+> install below remains available for development.
 
 **Jump to:** [Install](#install) · [Config](#config) · [Privacy](#privacy-and-local-data) · [Development](#development) · [License](#license)
 
@@ -130,19 +131,19 @@ that row sits deep in the list.
 
 Requires Node.js `^22.19 || >=24` and dsh-TUI 0.17.0.
 
-The npm package is not published yet. From a checkout:
+Install from npm:
+
+```sh
+dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar
+```
+
+For development from a checkout:
 
 ```sh
 git clone https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar.git
 cd dsh-tui-workspace-sidebar
-npm install
+npm ci
 dsh plugin --profile dsh-tui add link:$PWD
-```
-
-Once the npm release is out, the same install is:
-
-```sh
-dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar
 ```
 
 Then restart the TUI (a newly added bundle is not picked up by a running
@@ -467,6 +468,10 @@ npm pack --dry-run
 There is no build step; the package ships the ESM sources directly. The test
 suite uses `node --test` and temporary directories, so it never touches the real
 `~/.dsh-tui` state. CI runs the same commands on Node 22.19 and 24.
+
+Releases are tag-driven; see [CONTRIBUTING.md](CONTRIBUTING.md). 0.1.0 was
+bootstrapped with a manual publish; later releases use npm trusted publishing
+and include provenance.
 
 ## Tests
 

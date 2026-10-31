@@ -1,8 +1,9 @@
 name: publish
 
 # Tag-driven release, matching the dsh-TUI ecosystem convention: the tag must
-# equal `v` + package.json version. Configure npm trusted publishing (or add an
-# NPM_TOKEN secret) before pushing the first `v*` tag.
+# equal `v` + package.json version. The repository uses npm trusted publishing
+# (OIDC); no NPM_TOKEN is required. The publish step is idempotent: a tag for an
+# already-published version skips the registry write.
 on:
   push:
     tags: ['v*']
@@ -38,8 +39,17 @@ jobs:
             }
           '
 
+      - name: Check whether this version is already on npm
+        id: published
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "dsh-tui-workspace-sidebar@$version" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "dsh-tui-workspace-sidebar@$version is already published; skipping npm publish."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - run: npm pack --dry-run
       - run: npm publish --provenance --access public
-        env:
-          # Empty when trusted publishing is configured; npm then uses OIDC.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: steps.published.outputs.already != 'true'

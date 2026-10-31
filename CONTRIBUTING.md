@@ -47,11 +47,14 @@ The repository is tag-driven:
 
 1. Update `package.json`, `dsh-plugin.json` and `CHANGELOG.md` to the same
    version, then run the checks.
-2. Configure npm trusted publishing for the repository (or add an `NPM_TOKEN`
-   secret) if this is the first release.
+2. Trusted publishing is configured for this repository (GitHub Actions,
+   workflow `publish.yml`); no `NPM_TOKEN` secret is needed. For a brand-new
+   package, publish the first version manually, then add the trusted publisher
+   before pushing the next tag. 0.1.0 was bootstrapped this way.
 3. Push a `vX.Y.Z` tag whose version equals `package.json`. The `publish`
-   workflow verifies the tag, packs the package and runs
-   `npm publish --provenance --access public`.
+   workflow verifies the tag, skips the registry write when that exact version
+   is already published (the bootstrap case), otherwise runs
+   `npm publish --provenance --access public` through OIDC.
 
-Never push a `v*` tag just to test CI; the publish workflow will attempt a
-release. Use a branch push or a manual workflow dispatch instead.
+Never push a `v*` tag just to test CI; the workflow will publish unless that
+version already exists.

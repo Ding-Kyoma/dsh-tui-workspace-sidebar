@@ -24,6 +24,12 @@ All notable changes to this project are documented here. The format follows
 - Cordis `Config` schema with the documented defaults, an offline release
   guard, CI on Node 22.19/24, and a tag-driven npm publish workflow.
 
+### Release
+
+- Published to npm as `dsh-tui-workspace-sidebar@0.1.0` on 2026-10-31. This
+  first version was bootstrapped with a manual publish; later versions are
+  published by the tag-driven workflow using npm trusted publishing.
+
 ### Known limitations
 
 - The roster is per TUI process; conversations that only exist on disk are not
@@ -32,6 +38,7 @@ All notable changes to this project are documented here. The format follows
   click.
 - The plugin depends on dsh-TUI 0.17.0's `user-questions/request` waterfall and
   public panel/scene/command seams.
-- npm publication is not part of the initial public release.
+- 0.1.0 has no npm provenance attestation because it was bootstrapped with a
+  manual publish; later releases use trusted publishing and include provenance.
 
 [0.1.0]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/releases/tag/v0.1.0
