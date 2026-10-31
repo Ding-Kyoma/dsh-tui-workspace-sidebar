@@ -1,0 +1,45 @@
+name: publish
+
+# Tag-driven release, matching the dsh-TUI ecosystem convention: the tag must
+# equal `v` + package.json version. Configure npm trusted publishing (or add an
+# NPM_TOKEN secret) before pushing the first `v*` tag.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run check:manifest
+
+      - name: Check the tag matches package.json
+        run: |
+          node -e '
+            const pkg = require("./package.json");
+            const expected = "v" + pkg.version;
+            if (process.env.GITHUB_REF_NAME !== expected) {
+              console.error("tag " + process.env.GITHUB_REF_NAME + " does not match " + expected);
+              process.exit(1);
+            }
+          '
+
+      - run: npm pack --dry-run
+      - run: npm publish --provenance --access public
+        env:
+          # Empty when trusted publishing is configured; npm then uses OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

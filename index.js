@@ -22,6 +22,7 @@
  *   instead of being assumed.
  */
 
+import Schema from '@deepseek-ai/schemastery';
 import { readAttachedSessionId } from './current.js';
 import { JUMP_SCENE_ID, createJumpQueue, createJumpScene } from './jump.js';
 import { createPanel } from './panel.js';
@@ -39,6 +40,20 @@ export const DEFAULT_SHORTCUT = 'alt+w';
 export const DEFAULT_RETENTION_HOURS = 7 * 24;
 /** A month is plenty; the 300-row cap bounds memory long before that. */
 const MAX_RETENTION_HOURS = 720;
+
+/**
+ * Cordis contract: the host validates and defaults a row's `config` against
+ * this schema before `apply` runs. The defaults mirror {@link normalizeConfig};
+ * range handling stays there so a hand-written value outside the documented
+ * window is still tolerated instead of failing activation.
+ */
+export const Config = Schema.object({
+  lang: Schema.union(['auto', 'zh', 'en']).default('auto'),
+  stateFile: Schema.string().default(DEFAULT_STATE_FILE),
+  shortcut: Schema.string().default(DEFAULT_SHORTCUT),
+  retentionHours: Schema.number().default(DEFAULT_RETENTION_HOURS),
+  relayQuestions: Schema.boolean().default(true),
+});
 
 /**
  * @param {unknown} error
@@ -257,10 +272,10 @@ export function apply(ctx, config = {}) {
           }
           return;
         } catch (error) {
-          // A manifest-less local plugin has no verified Component identity, so
-          // the mediated surface refuses it. The commands service is a public
-          // Cordis service and still accepts an unattributed global definition
-          // (the documented C-070 boundary).
+          // The host refuses the mediated surface when the manifest does not
+          // declare this command, or when an older host gives the activation no
+          // Component identity. The commands service is a public Cordis service
+          // and still accepts an unattributed global definition (C-070).
           warn('mediated command registration was refused; falling back', error);
         }
       }
@@ -409,5 +424,3 @@ export function apply(ctx, config = {}) {
     warn('activation failed', error);
   }
 }
-
-export default apply;

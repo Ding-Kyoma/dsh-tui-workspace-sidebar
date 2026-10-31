@@ -1,7 +1,20 @@
 # dsh-tui-workspace-sidebar
 
-A light right-side panel for dsh-tui that answers one question at a glance:
+[![CI](https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
+([dshtui.com](https://dshtui.com)) that answers one question at a glance:
 **what is running, what finished while I was not looking, and where am I?**
+
+This is a community plugin, not an official dsh-TUI component. It is built
+against dsh-TUI 0.17.0 and uses only public host seams.
+
+> **Status:** pre-release. The npm package is not published yet; use the
+> checkout install below. The tag-driven publish workflow is ready for the
+> eventual `v*` release.
+
+**Jump to:** [Install](#install) · [Config](#config) · [Privacy](#privacy-and-local-data) · [Development](#development) · [License](#license)
 
 It uses a normal side-panel tab instead of a full-screen view: grouped by
 project, one line per conversation, hover to highlight, click to jump. A `+`
@@ -115,18 +128,63 @@ that row sits deep in the list.
 
 ## Install
 
+Requires Node.js `^22.19 || >=24` and dsh-TUI 0.17.0.
+
+The npm package is not published yet. From a checkout:
+
 ```sh
-dsh plugin --profile dsh-tui add link:/absolute/path/to/dsh-tui-workspace-sidebar
+git clone https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar.git
+cd dsh-tui-workspace-sidebar
+npm install
+dsh plugin --profile dsh-tui add link:$PWD
+```
+
+Once the npm release is out, the same install is:
+
+```sh
+dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar
 ```
 
 Then restart the TUI (a newly added bundle is not picked up by a running
 process). The tab appears as `▣ 收件箱` (or `▣ Inbox`); `Ctrl+B` opens the
 sidebar, `[`/`]` cycle panels, and the panel is also listed by `/panel`.
 
+If you previously linked an older `@local/dsh-tui-workspace-sidebar` checkout,
+remove that row before adding this package: two activations cannot own the same
+panel/scene ids.
+
 The plugin also registers:
 
-- `/ws` — open the sidebar panel.
+- `/ws` — open the sidebar panel. It is declared in `dsh-plugin.json`
+  (`workspace-sidebar.ws`, contract `commands.dsh/v1alpha1#Command`, permission
+  `commands.invoke`), so a host with a verified Component identity registers it
+  through the mediated command surface; older hosts fall back to the public
+  `commands` service.
 - `alt+w` — same, configurable or disable with `shortcut: off`.
+
+## Compatibility
+
+- dsh-TUI 0.17.0: the panel, scene, command and question seams used here are the
+  public 0.17.0 surfaces.
+- Community manifest v0.15 (`dsh.community`), host facet `v1alpha1`, with the
+  `commands.dsh/v1alpha1#Command` contract and the `/ws` permission closure.
+- Node.js `^22.19 || >=24`.
+- Developed and tested on macOS. The runtime uses only Node built-ins and the
+  host-provided React/UI kit; Linux should work, Windows is untested.
+
+## Project layout
+
+| File | Role |
+| --- | --- |
+| `index.js` | Cordis entry: `name` / `Config` / `apply`, panel + scene + command + shortcut wiring |
+| `model.js` | Pure row/group/order/glyph rules, no I/O |
+| `tracker.js` | Folds the live agent registry and session events into rows |
+| `store.js` | Debounced, atomic, quarantining JSON state |
+| `panel.js` | The sidebar component |
+| `jump.js` | One-shot queue and transition scene |
+| `questions.js` | Waiting-dot observation and background-question relay |
+| `current.js` | Attached-session probe |
+| `strings.js` | English/Chinese copy and language resolution |
 
 ## Config
 
@@ -326,6 +384,27 @@ Raising `retentionHours` is forward-looking: a row that was already pruned is
 not rebuilt from the session logs. Resuming that conversation makes it a live
 row again.
 
+## Privacy and local data
+
+The plugin is local-only: it makes no network requests, sends no telemetry and
+runs no shell commands. It reads:
+
+- `~/.dsh-tui/inject/servers.json` — the documented cross-process signal that
+  names the session this TUI process currently serves;
+- `~/.dsh-tui/lang.json` — the saved UI language;
+- live agent/session events in memory, for the running, unread and waiting
+  states.
+
+It writes one file, `~/.dsh-tui/workspace-sidebar.json` (mode `0600` on POSIX,
+atomic rename, debounced writes). That file contains session ids, titles, cwd,
+timestamps and read state. Treat it as sensitive: titles and cwd can reveal
+project names and paths. It does not read session logs from disk, does not store
+message contents, and drops the in-memory `waiting` flags on save.
+
+Like every dsh-TUI plugin, this code runs trusted-in-process with the same
+permissions as the TUI; there is no sandbox. See [SECURITY.md](SECURITY.md) for
+the reporting path and the full data-handling note.
+
 ## Limitations
 
 - **Same process only.** The plugin folds the core agent registry
@@ -351,7 +430,10 @@ row again.
   picker would show "临时面板 #N · 仅本次运行，不保存" because it refuses to
   persist an address no later run can honour (issue #1695 upstream). The id is
   still re-resolved from `panels.list()` on every activation rather than
-  assumed. If your `sidePanel.panels` is an explicit list written before the
+  assumed. The same manifest declares `/ws` with the `commands.dsh/v1alpha1`
+  contract and the matching `commands.invoke` permission, so the mediated
+  command surface accepts it; older hosts fall back to the global `commands`
+  service. If your `sidePanel.panels` is an explicit list written before the
   manifest existed, tick the inbox once in `/settings`; that choice now
   persists.
 - **Transition card.** The full-screen flash is the only public-API path to a
@@ -373,10 +455,23 @@ row again.
 - **One lifecycle.** Do not install two copies under different names: the
   second activation cannot register the same panel/scene ids.
 
+## Development
+
+```sh
+npm ci
+npm test
+npm run check:manifest
+npm pack --dry-run
+```
+
+There is no build step; the package ships the ESM sources directly. The test
+suite uses `node --test` and temporary directories, so it never touches the real
+`~/.dsh-tui` state. CI runs the same commands on Node 22.19 and 24.
+
 ## Tests
 
 ```sh
-npm test        # node --test: model, tracker, store, current, jump, apply, strings, panel, questions
+npm test        # node --test: config, model, tracker, store, current, jump, apply, strings, panel, questions, manifest
 ```
 
 The tests cover the transition table (`running → finished → seen`), the
@@ -412,4 +507,24 @@ and aborted turns, disposal, unexpected errors, agentless requests, the private
 forward marker, the foreground `NO_PROVIDER` guard, multiple parked asks per
 agent, a double click while a forward is in flight, `relayQuestions: false`
 disabling parking but not the dot, and the green-dot row / header counts /
-non-persistence of the waiting flag.
+non-persistence of the waiting flag. The manifest tests cover the v0.15 shape,
+the `/ws` command/contract/permission closure and the publish metadata; the
+config test covers the Cordis defaults and type rejection; the apply tests also
+cover the mediated command surface and the global-service fallback.
+
+## Uninstall
+
+```sh
+dsh plugin --profile dsh-tui remove dsh-tui-workspace-sidebar
+```
+
+Use the package name you installed (an older `link:` checkout may be listed under
+its old name). Removing the plugin takes the panel, scene, command and shortcut
+out of the profile; it does **not** delete user data. To remove the sidebar
+state, delete `~/.dsh-tui/workspace-sidebar.json` yourself. The only other file
+it may write is the `workspace-sidebar.json.corrupt-<epoch>` quarantine of an
+unparseable state file.
+
+## License
+
+MIT © 2026 [Ding-Kyoma](https://github.com/Ding-Kyoma). See [LICENSE](LICENSE).

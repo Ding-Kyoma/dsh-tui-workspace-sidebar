@@ -1,23 +1,14 @@
 {
-  "name": "@local/dsh-tui-workspace-sidebar",
+  "name": "dsh-tui-workspace-sidebar",
   "version": "0.1.0",
-  "private": true,
+  "description": "Right-side inbox sidebar for dsh-TUI: running, unread and recent conversations grouped by workspace",
   "type": "module",
-  "description": "Sidebar panel for dsh-tui: running and recent conversations grouped by workspace",
+  "main": "./index.js",
   "exports": {
     ".": "./index.js",
-    "./model": "./model.js",
-    "./tracker": "./tracker.js",
-    "./store": "./store.js",
-    "./panel": "./panel.js",
-    "./jump": "./jump.js",
-    "./questions": "./questions.js",
-    "./current": "./current.js",
-    "./strings": "./strings.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "main": "./index.js",
   "files": [
     "index.js",
     "model.js",
@@ -30,15 +21,44 @@
     "strings.js",
     "cordis.patch.yml",
     "dsh-plugin.json",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "check:manifest": "node scripts/check-manifest.mjs",
+    "check": "npm test && npm run check:manifest",
+    "prepublishOnly": "npm run check"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.19 || >=24"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/issues"
+  },
+  "homepage": "https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar#readme",
+  "author": "Ding-Kyoma (https://github.com/Ding-Kyoma)",
+  "keywords": [
+    "dsh",
+    "dsh-tui",
+    "dsh-plugin",
+    "deepseek-harness",
+    "tui",
+    "sidebar",
+    "inbox",
+    "cordis"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

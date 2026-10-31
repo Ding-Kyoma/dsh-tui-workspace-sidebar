@@ -1,7 +1,11 @@
 # Workspace sidebar for dsh-tui.
 #
-# Install:
-#   dsh plugin --profile dsh-tui add link:/absolute/path/to/dsh-tui-workspace-sidebar
+# Install (npm, once published):
+#   dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar
+#
+# Until the npm release, install from a checkout:
+#   npm install
+#   dsh plugin --profile dsh-tui add link:$PWD
 #
 # The CLI adds the package to the profile's dependencies and, because this
 # package declares `dsh.bundle.patch`, to `dsh.profile.bundles`.
@@ -19,4 +23,4 @@
 #
 - insert:
     - id: workspace-sidebar
-      name: '@local/dsh-tui-workspace-sidebar'
+      name: 'dsh-tui-workspace-sidebar'

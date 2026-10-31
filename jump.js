@@ -350,7 +350,12 @@ export function createJumpScene(options) {
     const size = useTerminalSize();
     const [, animTime] = useAnimationFrame(RUNNING_FRAME_MS);
     const frame = Math.floor(animTime / RUNNING_FRAME_MS) % RUNNING_FRAMES.length;
-    const [target] = React.useState(() => queue.take());
+    // Consume the one-shot target exactly once. A state initializer can run
+    // twice under React StrictMode, which would drop the click; the ref keeps
+    // the first take for every render of this scene.
+    const targetRef = React.useRef();
+    if (targetRef.current === undefined) targetRef.current = { value: queue.take() };
+    const target = targetRef.current.value;
     const started = React.useRef(false);
     const lang = target?.lang === 'zh' ? 'zh' : target?.lang === 'en' ? 'en' : resolveLang(config?.lang);
     const strings = messagesFor(lang);

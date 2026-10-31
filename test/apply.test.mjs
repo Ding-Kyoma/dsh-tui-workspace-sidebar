@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { DEFAULT_RETENTION_HOURS, PANEL_ICON, PANEL_ORDER, PANEL_SUB_ID, apply, normalizeConfig } from '../index.js';
 import { JUMP_SCENE_ID } from '../jump.js';
 
-async function makeHarness({ withPanels = true } = {}) {
+async function makeHarness({ withPanels = true, withHost = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'workspace-sidebar-apply-'));
   const stateFile = join(directory, 'state.json');
   const registered = [];
@@ -14,6 +14,7 @@ async function makeHarness({ withPanels = true } = {}) {
   const badges = [];
   const scenes = [];
   const commands = [];
+  const mediatedCommands = [];
   const shortcuts = [];
   const listeners = new Map();
   const services = {
@@ -48,6 +49,14 @@ async function makeHarness({ withPanels = true } = {}) {
         return () => {};
       },
     },
+    tuiPluginHost: withHost
+      ? {
+        registerCommand(identity, definition) {
+          mediatedCommands.push({ identity, definition });
+          return () => {};
+        },
+      }
+      : undefined,
     tuiShortcuts: {
       register(combo, options, identity) {
         shortcuts.push({ combo, options, identity });
@@ -98,7 +107,18 @@ async function makeHarness({ withPanels = true } = {}) {
     },
   };
 
-  return { ctx, stateFile, registered, opened, badges, scenes, commands, shortcuts, listeners };
+  return {
+    ctx,
+    stateFile,
+    registered,
+    opened,
+    badges,
+    scenes,
+    commands,
+    mediatedCommands,
+    shortcuts,
+    listeners,
+  };
 }
 
 test('normalizeConfig: retentionHours defaults, accepts fractions, zero, and clamps', () => {
@@ -153,6 +173,20 @@ test('apply registers a valid panel, the jump scene, /ws and the shortcut', asyn
   assert.equal(harness.shortcuts[0].combo, 'alt+w');
   harness.shortcuts[0].options.handler();
   assert.deepEqual(harness.opened, [`session:act1:${PANEL_SUB_ID}`, `session:act1:${PANEL_SUB_ID}`]);
+});
+
+test('apply uses the mediated command surface when the host provides it', async () => {
+  const harness = await makeHarness({ withHost: true });
+  apply(harness.ctx, { lang: 'zh', stateFile: harness.stateFile, shortcut: 'off' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  // The manifest declares workspace-sidebar.ws, so a host with a verified
+  // Component identity accepts the mediated registration and the plugin must
+  // not register a second, unattributed copy through the global service.
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.mediatedCommands.length, 1);
+  assert.equal(harness.mediatedCommands[0].definition.name, 'ws');
+  assert.equal(typeof harness.mediatedCommands[0].definition.handler, 'function');
 });
 
 test('apply honors shortcut: off', async () => {

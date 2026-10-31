@@ -1,5 +1,5 @@
 {
-  "$schema": "https://dsh.dev/schemas/dsh-plugin-0.15.schema.json",
+  "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "manifestVersion": "0.15",
   "id": "workspace-sidebar",
   "name": "Workspace sidebar",
@@ -11,11 +11,32 @@
     }
   },
   "requires": {
-    "contracts": []
+    "contracts": [
+      {
+        "apiVersion": "commands.dsh/v1alpha1",
+        "kind": "Command"
+      }
+    ]
   },
-  "permissions": [],
+  "permissions": [
+    {
+      "name": "commands.invoke",
+      "scope": "workspace-sidebar.ws",
+      "reason": "Registers /ws, which opens the inbox panel."
+    }
+  ],
   "contributes": {
-    "commands": []
+    "commands": [
+      {
+        "id": "workspace-sidebar.ws",
+        "title": "Open inbox",
+        "description": "Open the workspace inbox panel."
+      }
+    ]
   },
-  "subscriptions": []
+  "subscriptions": [],
+  "license": "MIT",
+  "source": {
+    "repository": "https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar"
+  }
 }

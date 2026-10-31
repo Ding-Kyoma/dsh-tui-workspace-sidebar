@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   KIND_NEW,
   createJumpQueue,
+  createJumpScene,
   performJump,
   performNewSession,
   workspaceTargetFor,
@@ -317,6 +318,58 @@ test('performNewSession: throwing host calls and a missing channel both toast an
   assert.equal(noChannel.reason, 'unavailable');
   assert.ok(missing.some(text => text.includes('cannot create')));
   assert.equal(missing.at(-1), 'close');
+});
+
+test('the jump scene consumes its one-shot target once across repeated renders', () => {
+  // React StrictMode renders a component twice. A state initializer would call
+  // queue.take() twice and the second take would return undefined; the ref guard
+  // must keep the first target for every render of the same scene.
+  let takes = 0;
+  const queue = {
+    take() {
+      takes += 1;
+      return { id: 's1', title: 'One' };
+    },
+  };
+  const Scene = createJumpScene({
+    queue,
+    tracker: { markSeen() {} },
+    config: { lang: 'en' },
+  });
+
+  const hooks = [];
+  let cursor = 0;
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props, children }),
+    useRef() {
+      const index = cursor;
+      cursor += 1;
+      if (!(index in hooks)) hooks[index] = { current: undefined };
+      return hooks[index];
+    },
+    useEffect() {
+      cursor += 1;
+    },
+  };
+  const ui = {
+    Box: 'Box',
+    Text: 'Text',
+    useInput() {},
+    useTerminalSize: () => ({ columns: 80, rows: 24 }),
+    useAnimationFrame: () => [0, 0],
+  };
+  const props = {
+    React,
+    ui,
+    channel: { notify() {} },
+    close() {},
+  };
+
+  Scene(props);
+  cursor = 0;
+  Scene(props);
+
+  assert.equal(takes, 1);
 });
 
 test('performNewSession: a missing or non-new target closes silently', async () => {
