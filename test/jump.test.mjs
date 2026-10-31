@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
 import {
   KIND_NEW,
   createJumpQueue,
@@ -133,7 +134,7 @@ test('workspaceTargetFor: builds a local target with the cwd as display copy', (
   assert.deepEqual(workspaceTargetFor('/repo/app/', 'dsh-plugins'), {
     kind: 'local',
     cwd: '/repo/app',
-    uri: 'file:///repo/app',
+    uri: pathToFileURL('/repo/app').href,
     label: 'dsh-plugins',
     description: '/repo/app',
     badge: '',
