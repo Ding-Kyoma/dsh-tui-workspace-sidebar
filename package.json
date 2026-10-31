@@ -1,6 +1,6 @@
 {
   "name": "dsh-tui-workspace-sidebar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Right-side inbox sidebar for dsh-TUI: running, unread and recent conversations grouped by workspace",
   "type": "module",
   "main": "./index.js",
@@ -22,6 +22,7 @@
     "cordis.patch.yml",
     "dsh-plugin.json",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE",
     "assets"
   ],
