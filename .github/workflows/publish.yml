@@ -4,6 +4,10 @@ name: publish
 # equal `v` + package.json version. The repository uses npm trusted publishing
 # (OIDC); no NPM_TOKEN is required. The publish step is idempotent: a tag for an
 # already-published version skips the registry write.
+#
+# Deliberately no `registry-url` on setup-node: that action then writes an
+# `.npmrc` auth line and exports a placeholder NODE_AUTH_TOKEN, which makes npm
+# try token auth instead of the OIDC exchange.
 on:
   push:
     tags: ['v*']
@@ -21,7 +25,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           cache: npm
 
       - run: npm ci
@@ -51,5 +54,8 @@ jobs:
           fi
 
       - run: npm pack --dry-run
-      - run: npm publish --provenance --access public
+      - name: Publish with OIDC trusted publishing
         if: steps.published.outputs.already != 'true'
+        run: |
+          unset NODE_AUTH_TOKEN
+          npm publish --provenance --access public
