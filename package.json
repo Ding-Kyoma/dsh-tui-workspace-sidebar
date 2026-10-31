@@ -22,7 +22,8 @@
     "cordis.patch.yml",
     "dsh-plugin.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "assets"
   ],
   "scripts": {
     "test": "node --test",

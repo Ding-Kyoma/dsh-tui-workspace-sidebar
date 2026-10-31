@@ -33,6 +33,11 @@ after a project's status icons starts a fresh conversation in that workspace.
 ↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新
 ```
 
+![Workspace sidebar with running, waiting and read conversations grouped by workspace](assets/sidebar.webp)
+
+*The inbox in a dark dsh-TUI theme: running, waiting and read rows grouped by
+workspace.*
+
 ## What it shows
 
 Four kinds of conversations, across every workspace that is live in this TUI
