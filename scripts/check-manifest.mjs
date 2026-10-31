@@ -188,6 +188,11 @@ check('LICENSE exists and is MIT', existsSync(join(root, 'LICENSE')) && readText
 check('README exists', existsSync(join(root, 'README.md')));
 const readme = existsSync(join(root, 'README.md')) ? readText('README.md') : '';
 check('README links back to dsh-TUI', /https:\/\/(?:github\.com\/ccch1mneyyy\/dsh-TUI|dshtui\.com)/u.test(readme));
+check('Chinese README exists', existsSync(join(root, 'README.zh-CN.md')));
+const zhReadme = existsSync(join(root, 'README.zh-CN.md')) ? readText('README.zh-CN.md') : '';
+check('package.files includes README.zh-CN.md', files.includes('README.zh-CN.md'));
+check('README links to the Chinese README', readme.includes('README.zh-CN.md'));
+check('Chinese README links back to the English README', zhReadme.includes('README.md'));
 
 let patch = '';
 try {

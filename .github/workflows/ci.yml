@@ -38,7 +38,8 @@ jobs:
             const required = [
               "index.js", "model.js", "tracker.js", "store.js", "panel.js",
               "jump.js", "questions.js", "current.js", "strings.js",
-              "dsh-plugin.json", "cordis.patch.yml", "README.md", "LICENSE",
+              "dsh-plugin.json", "cordis.patch.yml", "README.md",
+              "README.zh-CN.md", "LICENSE",
             ];
             for (const file of required) {
               if (!files.has(file)) {

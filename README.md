@@ -4,6 +4,8 @@
 [![npm](https://img.shields.io/npm/v/dsh-tui-workspace-sidebar.svg)](https://www.npmjs.com/package/dsh-tui-workspace-sidebar)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**English** | [简体中文](https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/blob/main/README.zh-CN.md)
+
 A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 ([dshtui.com](https://dshtui.com)) that answers one question at a glance:
 **what is running, what finished while I was not looking, and where am I?**
@@ -11,11 +13,17 @@ A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 This is a community plugin, not an official dsh-TUI component. It is built
 against dsh-TUI 0.17.0 and uses only public host seams.
 
-> **Status:** published as `dsh-tui-workspace-sidebar@0.1.0`. Install with
+> **Status:** published as `dsh-tui-workspace-sidebar@0.1.1`. Install with
 > `dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar`; the checkout
 > install below remains available for development.
 
-**Jump to:** [Install](#install) · [Config](#config) · [Privacy](#privacy-and-local-data) · [Development](#development) · [License](#license)
+> **中文速览**：dsh-TUI 右侧收件箱侧边栏，按工作区列出正在运行、未读、待回答和
+> 近期已读的会话。安装：
+> `dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar`；界面语言跟随
+> dsh-TUI 的 `/lang`，也可在插件配置里写 `lang: zh` 或 `lang: en`。完整中文说明见
+> [README.zh-CN.md](https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/blob/main/README.zh-CN.md)。
+
+**Jump to:** [Install](#install) · [Config](#config) · [Languages](#languages) · [Privacy](#privacy-and-local-data) · [Development](#development) · [License](#license)
 
 It uses a normal side-panel tab instead of a full-screen view: grouped by
 project, one line per conversation, hover to highlight, click to jump. A `+`
@@ -217,6 +225,27 @@ host already handles those questions itself, or if you want the old immediate
 `NO_PROVIDER` behavior back. It does **not** disable the waiting dot: the dot
 of a question the host is already showing (including the attached session's
 own questionnaire / plan review) is pure observation and stays on either way.
+
+## Languages
+
+The panel is bilingual: every label it draws — the tab title, header, empty
+state, row suffixes, footer hints, toasts and the transition card — comes from
+`strings.js` in English and Simplified Chinese. Relative times (`5m ago` /
+`5 分钟前`) follow the same language.
+
+The language is resolved in this order:
+
+1. the plugin's `lang` config (`zh` / `en`; `auto` by default),
+2. the host's live UI language (what `/lang` and `dsh-tui.lang` set),
+3. `DSH_TUI_LANG`,
+4. `~/.dsh-tui/lang.json`,
+5. the OS locale (Chinese locales → `zh`, everything else → `en`).
+
+With `lang: auto` (the default), `/lang` switches the panel content on the next
+repaint. A pinned `lang: zh` or `lang: en` always wins. The panel tab title and
+the `/ws` command description are registered when the plugin activates, so they
+keep the old language until dsh-TUI restarts. The `dsh-plugin.json` manifest
+metadata is English-only host metadata.
 
 ## Interaction
 
@@ -521,6 +550,11 @@ non-persistence of the waiting flag. The manifest tests cover the v0.15 shape,
 the `/ws` command/contract/permission closure and the publish metadata; the
 config test covers the Cordis defaults and type rejection; the apply tests also
 cover the mediated command surface and the global-service fallback.
+
+`strings.test.mjs` also checks that both dictionaries carry the same keys,
+types and `{{placeholder}}` sets, and that the language-resolution order
+(config > live host language > `DSH_TUI_LANG` > `lang.json`) is stable.
+`panel.test.mjs` renders the same rows in English as well as Chinese.
 
 ## Uninstall
 
