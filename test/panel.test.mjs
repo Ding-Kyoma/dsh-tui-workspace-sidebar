@@ -118,8 +118,9 @@ function createHarness(getSnapshot = snapshot, options = {}) {
     },
   };
 
+  const lang = options.lang ?? 'zh';
   const host = {
-    snapshot: () => ({ sessionId: 'cur', lang: 'zh' }),
+    snapshot: () => ({ sessionId: 'cur', lang }),
     toast(text) {
       toasts.push(text);
     },
@@ -160,7 +161,7 @@ function createHarness(getSnapshot = snapshot, options = {}) {
       },
     },
   };
-  const component = createPanel({ tracker, config: { lang: 'zh' }, jump });
+  const component = createPanel({ tracker, config: { lang }, jump });
 
   function render() {
     cursor = 0;
@@ -743,4 +744,28 @@ test('panel: a shrinking list clamps the stored scroll offset', () => {
   harness.wheel(-3);
   tree = harness.render();
   assert.ok(findBox(tree, 'p1-done-7'), 'the first wheel-up moves immediately, not inside a dead zone');
+});
+
+test('panel: the same rows render English chrome when the language is en', () => {
+  const rows = [
+    makeRow({ id: 'run', title: 'Run the patch check', status: 'running', finishedAt: 0, seenAt: 0, updatedAt: NOW - 120_000 }),
+    makeRow({ id: 'ask', title: 'Background ask', waiting: true, seenAt: 0, updatedAt: NOW - 300_000, finishedAt: NOW - 300_000 }),
+    makeRow({ id: 'done', title: 'Rewrite README', seenAt: NOW - 60_000, updatedAt: NOW - 60_000 }),
+  ];
+  const getSnapshot = () => ({
+    groups: [{ key: '/repo/app', cwd: '/repo/app', title: 'dsh-plugins', running: 1, unread: 1, rows }],
+    running: 1,
+    unread: 1,
+    flatRows: rows,
+    currentId: 'done',
+    agentsAvailable: true,
+    version: 1,
+  });
+  const harness = createHarness(getSnapshot, { lang: 'en' });
+  const lines = textLines(harness.render());
+  const text = lines.join('\n');
+  assert.ok(lines.includes(' 1 running · ● 1 unread'), text);
+  assert.ok(text.includes('needs you'), text);
+  assert.match(text, /\d+m ago/, text);
+  assert.ok(lines.includes('↑↓ select · Enter jump · n new · m read · r refresh'), text);
 });

@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-31
+
+### Added
+
+- A full Simplified Chinese README (`README.zh-CN.md`) beside the English
+  `README.md`, with language links in both directions and a Chinese quick
+  start on the npm page.
+- A `Languages` section documenting the English/Chinese UI, the resolution
+  order (plugin `lang` config > live host language > `DSH_TUI_LANG` >
+  `~/.dsh-tui/lang.json` > OS locale), and the labels that are registered
+  when the plugin activates.
+- Regression tests for dictionary key/type/`{{placeholder}}` parity, the
+  language-resolution precedence, and the panel rendered in English as well
+  as Chinese.
+
+### Changed
+
+- `README.zh-CN.md` is included in the npm tarball, and the release guard
+  checks that both READMEs ship and link to each other.
+- No runtime behaviour changed; the panel has been bilingual since 0.1.0.
+
+[0.1.1]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.0...v0.1.1
+
 ## [0.1.0] - 2026-10-31
 
 ### Added

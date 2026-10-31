@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { messagesFor } from '../strings.js';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fmt, messagesFor, parseLang, resolveLang } from '../strings.js';
+
+/** Every `{{name}}` token in a template, sorted for a stable comparison. */
+function placeholders(template) {
+  return [...String(template).matchAll(/\{\{(\w+)\}\}/g)]
+    .map(match => match[1])
+    .sort();
+}
 
 test('header: the running counter is static and keeps a blank icon cell', () => {
   const zh = messagesFor('zh');
@@ -60,4 +70,85 @@ test('the empty hint states the window in days once it spans a day', () => {
 test('waiting copy exists in both languages', () => {
   assert.equal(messagesFor('zh').waiting, '待回答');
   assert.equal(messagesFor('en').waiting, 'needs you');
+});
+
+test('both languages define the same keys with the same value types', () => {
+  const zh = messagesFor('zh');
+  const en = messagesFor('en');
+  assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort());
+  for (const key of Object.keys(zh)) {
+    assert.equal(typeof zh[key], typeof en[key], `${key} type`);
+  }
+});
+
+test('translated templates keep the same placeholders', () => {
+  const zh = messagesFor('zh');
+  const en = messagesFor('en');
+  for (const key of Object.keys(zh)) {
+    if (typeof zh[key] !== 'string') continue;
+    assert.deepEqual(placeholders(zh[key]), placeholders(en[key]), key);
+  }
+  for (const key of ['newError', 'openError', 'openOccupied']) {
+    assert.deepEqual(placeholders(zh[key]), placeholders(en[key]), key);
+  }
+});
+
+test('fmt fills known placeholders and blanks unknown ones', () => {
+  assert.equal(fmt('New session failed: {{err}}', { err: 'boom' }), 'New session failed: boom');
+  assert.equal(fmt('{{a}}/{{b}}', { a: 1, b: 2 }), '1/2');
+  assert.equal(fmt('{{missing}}'), '');
+});
+
+test('parseLang accepts only the shipped language ids', () => {
+  assert.equal(parseLang('zh'), 'zh');
+  assert.equal(parseLang(' EN '), 'en');
+  assert.equal(parseLang('auto'), undefined);
+  assert.equal(parseLang('fr'), undefined);
+  assert.equal(parseLang(undefined), undefined);
+});
+
+test('messagesFor falls back to English for an unknown language', () => {
+  assert.equal(messagesFor('zh').title, '收件箱');
+  assert.equal(messagesFor('en').title, 'Inbox');
+  assert.equal(messagesFor('fr').title, 'Inbox');
+});
+
+test('resolveLang: an explicit plugin language wins over the live host', () => {
+  assert.equal(resolveLang('zh', 'en'), 'zh');
+  assert.equal(resolveLang('en', 'zh'), 'en');
+  assert.equal(resolveLang('auto', 'zh'), 'zh');
+  assert.equal(resolveLang('fr', 'en'), 'en');
+});
+
+test('resolveLang: the live host wins over DSH_TUI_LANG', () => {
+  const previous = process.env.DSH_TUI_LANG;
+  try {
+    process.env.DSH_TUI_LANG = 'zh';
+    assert.equal(resolveLang('auto', 'en'), 'en');
+    assert.equal(resolveLang('auto', undefined), 'zh');
+  } finally {
+    if (previous === undefined) delete process.env.DSH_TUI_LANG;
+    else process.env.DSH_TUI_LANG = previous;
+  }
+});
+
+test('resolveLang: the saved choice is used when the host and env are silent', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workspace-sidebar-lang-'));
+  const previousHome = process.env.HOME;
+  const previousLang = process.env.DSH_TUI_LANG;
+  try {
+    delete process.env.DSH_TUI_LANG;
+    process.env.HOME = home;
+    await mkdir(join(home, '.dsh-tui'), { recursive: true });
+    await writeFile(join(home, '.dsh-tui', 'lang.json'), JSON.stringify({ lang: 'zh' }), 'utf8');
+    assert.equal(resolveLang('auto', undefined), 'zh');
+    await writeFile(join(home, '.dsh-tui', 'lang.json'), JSON.stringify({ lang: 'en' }), 'utf8');
+    assert.equal(resolveLang('auto', undefined), 'en');
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousLang === undefined) delete process.env.DSH_TUI_LANG;
+    else process.env.DSH_TUI_LANG = previousLang;
+    await rm(home, { recursive: true, force: true });
+  }
 });
