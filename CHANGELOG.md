@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-11-02
+
+### Fixed
+
+- Workspaces were pinned to the slot where they first appeared inside their
+  triage class, so a conversation just run in a new workspace stayed at the
+  bottom of its class while its row already said "now". Inside a class the
+  workspace whose newest state change is most recent now leads — the key is the
+  same anchor rows use (the current turn's start, the finish marker, the parked
+  moment), so in-turn activity still never reshuffles anything and a workspace
+  moves once per state change. Class priority is unchanged (unread and parked
+  questions before running, running before done), and an exact anchor tie falls
+  back to the first-seen slot, then to the path.
+
+[0.1.2]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.1...v0.1.2
+
 ## [0.1.1] - 2026-10-31
 
 ### Added
