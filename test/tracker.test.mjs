@@ -151,7 +151,7 @@ test('two running sessions keep a stable order while their logs advance', () => 
   assert.deepEqual(order(), ['a', 'b'], 'the new turn stays anchored');
 });
 
-test('workspace groups keep their order while both workspaces start new turns', () => {
+test('a new turn lifts its workspace to the front of its class', () => {
   let clock = 10_000;
   const eventsA = [promptEvent('fix a', 100), turnStart(100)];
   const eventsB = [promptEvent('fix b', 200), turnStart(200)];
@@ -160,18 +160,25 @@ test('workspace groups keep their order while both workspaces start new turns', 
   const { tracker, harness } = makeTracker({ agents: [a, b], clock: () => clock });
 
   const groups = () => tracker.getSnapshot().groups.map(group => group.title);
-  assert.deepEqual(groups(), ['one', 'two']);
+  // The newer turn leads, whatever the tracker's map order is.
+  assert.deepEqual(groups(), ['two', 'one']);
 
   for (let index = 0; index < 3; index += 1) {
     clock += 1_000;
     eventsA.push(turnStart(clock));
     harness.emit('agent/status', { agent: a, status: 'running' });
-    assert.deepEqual(groups(), ['one', 'two'], 'a new turn in one workspace must not reorder groups');
+    assert.deepEqual(groups(), ['one', 'two'], 'a new turn in one workspace lifts it');
 
     clock += 1_000;
     eventsB.push(turnStart(clock));
     harness.emit('agent/status', { agent: b, status: 'running' });
-    assert.deepEqual(groups(), ['one', 'two'], 'a new turn in the other workspace must not reorder groups');
+    assert.deepEqual(groups(), ['two', 'one'], 'a new turn in the other workspace takes the lead back');
+
+    // In-turn activity never reshuffles the workspaces.
+    clock += 1;
+    eventsA.push({ type: 'tool/call', time: clock, data: { name: 'Bash' } });
+    harness.emit('agent/status', { agent: a, status: 'running' });
+    assert.deepEqual(groups(), ['two', 'one'], 'in-turn activity must not lift a workspace');
   }
 });
 

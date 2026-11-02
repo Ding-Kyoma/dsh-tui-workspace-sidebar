@@ -16,9 +16,12 @@
  * Ordering is class-first, then anchored to state changes rather than events.
  * Rows are listed as unread finishes, then running conversations, then the ones
  * already dealt with; inside a class a running row is anchored to its current
- * `turn/start` and a finished row to its finish marker. The fold still keeps the
- * latest event time for the relative label and the retention window, but that
- * value never reorders two concurrent conversations.
+ * `turn/start` and a finished row to its finish marker. Projects follow the same
+ * class priority and, inside a class, the workspace whose newest state change is
+ * most recent leads — so the workspace a turn was just started in rises to the
+ * top of its class. The fold still keeps the latest event time for the relative
+ * label and the retention window, but that value never reorders two concurrent
+ * conversations or two workspaces.
  */
 
 import {

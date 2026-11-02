@@ -13,7 +13,7 @@ A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 This is a community plugin, not an official dsh-TUI component. It is built
 against dsh-TUI 0.17.0 and uses only public host seams.
 
-> **Status:** published as `dsh-tui-workspace-sidebar@0.1.1`. Install with
+> **Status:** published as `dsh-tui-workspace-sidebar@0.1.2`. Install with
 > `dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar`; the checkout
 > install below remains available for development.
 
@@ -102,13 +102,16 @@ tokens, tool calls, step markers, background job events — never reorders the
 list, so two conversations running at the same time keep a fixed relative order
 instead of trading places on every event. A new turn lifts its row once, and an
 exact tie falls back to the session id. Projects follow the same class priority,
-so the first rows of the panel are always the ones that want attention. Inside a
-class projects also keep a fixed order — the slot where the project first
-appeared in this run, never an activity timestamp — so a new turn in one
-workspace cannot make two running workspaces trade places; only a change of
-class (a turn finishing unread, a question being parked, or an unread row being
-read) moves a project. The relative time on the right still reports the last
-activity (it is also what the retention window uses).
+so the conversation that wants attention still leads the panel. Inside a class
+the workspace whose newest state change is most recent rises to the top, so the
+workspace you just started a turn in (or whose turn just finished) leads its
+class instead of staying at the slot where it first appeared. The key is the
+same anchor rows use — the current turn's start while running, the finish marker
+once done, the parked moment while a question waits — so activity inside a turn
+never reshuffles the projects, and a workspace moves once per state change. An
+exact tie falls back to the slot where the project first appeared, then to its
+path. The relative time on the right still reports the last activity (it is also
+what the retention window uses).
 
 Each project lists at most **10 already-read** conversations. Running, waiting
 and unread rows are never capped, and the attached conversation always keeps a
@@ -518,8 +521,9 @@ retention window (visibility, pruning, next-expiry), the current-session rule
 (listed, pinned, never unread), the triage classes (unread, running, read) and
 the ordering anchor inside them (running rows anchored to their turn start,
 finished rows to their finish marker, so concurrent running conversations never
-swap as their logs advance, and running workspaces keep a fixed group order as
-their turns advance), subagent/no-prompt filtering, grouping, store
+swap as their logs advance, and the workspace whose state changed most recently
+leads its class while in-turn activity leaves the group order alone), subagent
+and no-prompt filtering, grouping, store
 atomicity/corruption, the jump failure matrix, the new-session decision table
 (`/new` vs workspace handoff vs `/bg`, refusals and thrown host calls), the
 workspace `+`/`n` affordance (including the hidden unknown-project case and

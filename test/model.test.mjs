@@ -542,44 +542,93 @@ test('buildGroups: a finished row is anchored to its finish, not to later events
   assert.deepEqual(buildGroups([done, other], [], '', { now: 10_000 }).flatRows.map(item => item.id), ['other', 'done']);
 });
 
-test('buildGroups: projects with running conversations keep a stable order', () => {
+test('buildGroups: the workspace whose turn started last leads its class', () => {
   const now = 10_000;
   const a = row({ id: 'a', cwd: '/repo/one', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
   const b = row({ id: 'b', cwd: '/repo/two', status: 'running', runningAt: 2_000, finishedAt: 0, updatedAt: 2_000 });
+  const titles = () => buildGroups([a, b], [], '', { now }).groups.map(group => group.title);
 
-  // Inside the running class the first-seen project leads and stays there.
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  // The newer turn leads, whatever the tracker's row order says.
+  assert.deepEqual(titles(), ['two', 'one']);
 
-  // Turns starting on either side must not reorder the projects; in-turn
-  // activity must not either.
-  a.runningAt = 9_000;
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
-  b.runningAt = 9_500;
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  // In-turn activity never moves a workspace: the anchor is what counts.
   a.updatedAt = 9_900;
   b.updatedAt = 9_950;
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  assert.deepEqual(titles(), ['two', 'one']);
+
+  // A new turn in the older workspace lifts it to the front, once.
+  a.runningAt = 9_000;
+  assert.deepEqual(titles(), ['one', 'two']);
+
+  // A newer turn on the other side takes the lead back.
+  b.runningAt = 9_500;
+  assert.deepEqual(titles(), ['two', 'one']);
 });
 
-test('buildGroups: a new turn in one workspace does not reorder groups', () => {
+test('buildGroups: a workspace used just now leads its class after older history', () => {
+  const now = 10_000_000;
+  // The tracker's row order, oldest first: the fresh conversation is appended
+  // last, which used to pin its workspace to the bottom of the class.
+  const rows = [
+    row({ id: 'alpha', cwd: '/repo/alpha', finishedAt: now - 30_000, updatedAt: now - 30_000, seenAt: now - 30_000 }),
+    row({ id: 'bravo', cwd: '/repo/bravo', finishedAt: now - 50_000, updatedAt: now - 50_000, seenAt: now - 50_000 }),
+    row({ id: 'charlie', cwd: '/repo/charlie', finishedAt: now - 20_000, updatedAt: now - 20_000, seenAt: now - 20_000 }),
+    row({ id: 'fresh', cwd: '/repo/fresh', finishedAt: now - 500, updatedAt: now - 500, seenAt: now - 500 }),
+  ];
+  const result = buildGroups(rows, [], 'fresh', { now });
+  assert.deepEqual(result.groups.map(group => group.title), ['fresh', 'charlie', 'alpha', 'bravo']);
+  // The activity key is internal: the snapshot keeps its previous shape.
+  for (const group of result.groups) {
+    assert.equal('order' in group, false);
+    assert.equal('activity' in group, false);
+  }
+});
+
+test('buildGroups: attention still leads activity across projects', () => {
+  const now = 10_000;
+  const unread = row({ id: 'u', cwd: '/repo/old-unread', finishedAt: 1_000, updatedAt: 1_000, seenAt: 0 });
+  const running = row({ id: 'r', cwd: '/repo/just-started', status: 'running', runningAt: 9_900, finishedAt: 0, updatedAt: 9_900 });
+  // Class first: an unread workspace outranks one that just started a turn.
+  assert.deepEqual(
+    buildGroups([unread, running], [], '', { now }).groups.map(group => group.title),
+    ['old-unread', 'just-started'],
+  );
+});
+
+test('fitGroups: folding read rows never reorders the projects', () => {
+  const now = 100_000;
+  const built = buildGroups(manyDoneRows(3, 12), [], '', { now });
+  // Higher project index = newer read rows, so the newest workspace leads.
+  assert.deepEqual(built.groups.map(group => group.key), ['/repo/p2', '/repo/p1', '/repo/p0']);
+  const fitted = fitGroups(built.groups, 18, '');
+  assert.ok(fitted.doneCap < DONE_ROWS_PER_PROJECT, 'the cap was lowered');
+  assert.deepEqual(fitted.groups.map(group => group.key), ['/repo/p2', '/repo/p1', '/repo/p0']);
+});
+
+test('buildGroups: an exact project anchor tie falls back to the first-seen slot', () => {
   const now = 10_000;
   const a = row({ id: 'a', cwd: '/repo/one', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
   const b = row({ id: 'b', cwd: '/repo/two', status: 'running', runningAt: 1_000, finishedAt: 0, updatedAt: 1_000 });
+  const titles = () => buildGroups([a, b], [], '', { now }).groups.map(group => group.title);
 
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
-  b.runningAt = 9_000; // the other workspace starts a new turn
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
+  // Same anchor: the workspace seen first keeps the lead.
+  assert.deepEqual(titles(), ['one', 'two']);
+  // A later turn is a real anchor difference, not a tie.
+  b.runningAt = 9_000;
+  assert.deepEqual(titles(), ['two', 'one']);
 });
 
-test('buildGroups: a new unread finish does not reorder projects in the unread class', () => {
+test('buildGroups: the newest unread finish leads the unread class', () => {
   const now = 10_000;
   const a = row({ id: 'a', cwd: '/repo/one', finishedAt: 100, updatedAt: 100, seenAt: 0 });
   const b = row({ id: 'b', cwd: '/repo/two', finishedAt: 9_000, updatedAt: 9_000, seenAt: 0 });
 
-  // Both are unread; the newer finish must not leapfrog the first-seen project.
-  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
-  b.finishedAt = 9_500;
-  b.updatedAt = 9_500;
+  // Both are unread, so the newer finish — not the first-seen slot — leads.
+  assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['two', 'one']);
+
+  // A later finish on the other side takes the lead back.
+  a.finishedAt = 9_500;
+  a.updatedAt = 9_500;
   assert.deepEqual(buildGroups([a, b], [], '', { now }).groups.map(group => group.title), ['one', 'two']);
 });
 

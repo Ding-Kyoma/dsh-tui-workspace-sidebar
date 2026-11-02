@@ -652,9 +652,13 @@ function capDoneRows(rows, currentId, cap = DONE_ROWS_PER_PROJECT) {
  * inside each project. Projects follow the same class priority — a project
  * whose top row is unread leads, then one with a running conversation, then the
  * rest — so the very first rows of the panel are always the ones that want
- * attention. Inside a class projects keep a fixed order: the slot where the
- * project was first seen, never an activity timestamp, so a new turn in one
- * workspace cannot make projects trade places while they both run.
+ * attention. Inside a class the workspace whose newest state change is most
+ * recent leads, so the workspace you just started a turn in sits at the top of
+ * its class instead of staying at the slot where it first appeared. The key is
+ * the same anchor rows use ({@link orderAtOf}): in-turn activity never reorders
+ * projects, so only a state change — a turn starting, a turn finishing, a
+ * question being parked — moves one, and it moves once. An exact tie falls back
+ * to the first-seen slot, then to the path.
  *
  * At most {@link DONE_ROWS_PER_PROJECT} already-read finished conversations are
  * listed per project. Running and unread rows are never trimmed, and the
@@ -690,8 +694,9 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     }
   }
 
-  // First-seen slot per project: the stable sort key inside a triage class.
-  // It comes from the tracker's row order, not from any activity clock.
+  // First-seen slot per project: a tie-break only, for two workspaces whose
+  // newest state change landed in the same millisecond. It comes from the
+  // tracker's row order, not from any activity clock.
   const order = new Map();
   const buckets = new Map();
   for (const row of visible) {
@@ -707,6 +712,12 @@ export function buildGroups(rows, registry, currentId, options = {}) {
 
   const projects = [...buckets.values()].map(bucket => {
     const list = capDoneRows([...bucket.rows].sort(compareByTriage), current);
+    // Newest state change in the whole project, not in the capped display list:
+    // the class ordering must not depend on the row cap or on the panel's
+    // height folding. The attached row's pin can pull an older read row into
+    // `list`; it must not drag the project down with it.
+    let activity = 0;
+    for (const row of bucket.rows) activity = Math.max(activity, orderAtOf(row));
     let running = 0;
     let unread = 0;
     for (const row of list) {
@@ -725,6 +736,7 @@ export function buildGroups(rows, registry, currentId, options = {}) {
       unread,
       rows: list,
       order: order.get(bucket.key) ?? 0,
+      activity,
     };
   });
 
@@ -732,9 +744,13 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     const leftRank = left.rows.length > 0 ? rankOf(left.rows[0]) : RANK_DONE;
     const rightRank = right.rows.length > 0 ? rankOf(right.rows[0]) : RANK_DONE;
     if (leftRank !== rightRank) return leftRank - rightRank;
-    // Inside a class, sort by when the project first appeared — not by
-    // `orderAtOf`. The running anchor tracks the current turn start, so using
-    // it here made two running workspaces swap places on every new turn.
+    // Inside a class the workspace that changed state most recently leads: a
+    // new turn lifts its workspace to the front, and the anchor only moves when
+    // the state does, so in-turn events never reshuffle the projects.
+    if (left.activity !== right.activity) return right.activity - left.activity;
+    // Same anchor (two workspaces settling in the same millisecond): fall back
+    // to where the project first appeared, then to the path, so the order stays
+    // total and deterministic.
     if (left.order !== right.order) return left.order - right.order;
     return left.key.localeCompare(right.key);
   });
@@ -748,7 +764,7 @@ export function buildGroups(rows, registry, currentId, options = {}) {
     flatRows.push(...project.rows);
   }
   return {
-    groups: projects.map(({ order: _order, ...rest }) => rest),
+    groups: projects.map(({ order: _order, activity: _activity, ...rest }) => rest),
     running,
     unread,
     flatRows,
