@@ -247,3 +247,20 @@ test('apply degrades when userQuestions is missing', async () => {
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(harness.listeners.get('user-questions/request')?.length, 1);
 });
+
+test('apply tolerates a host that refuses the tuiToast lookup', async () => {
+  // The copy confirmation asks for the three-second toast service while the
+  // activation runs; a composition without it (or one that throws on the
+  // lookup) must still leave the panel and its copy icon wired to the plain
+  // panel toast.
+  const harness = await makeHarness();
+  const original = harness.ctx.get;
+  harness.ctx.get = (name, fallback) => {
+    if (name === 'tuiToast') throw new Error('unknown service');
+    return original(name, fallback);
+  };
+  assert.doesNotThrow(() => apply(harness.ctx, { lang: 'zh', stateFile: harness.stateFile, shortcut: 'off' }));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(harness.registered.length, 1);
+  assert.equal(typeof harness.registered[0].descriptor.component, 'function');
+});

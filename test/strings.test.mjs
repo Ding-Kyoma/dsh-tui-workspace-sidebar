@@ -43,6 +43,23 @@ test('new-session copy exists in both languages and is advertised in the footer'
   }
 });
 
+test('copy-path copy exists in both languages and is advertised in the footer', () => {
+  assert.equal(messagesFor('zh').copied, '路径已复制');
+  assert.equal(messagesFor('en').copied, 'Path copied');
+  for (const lang of ['zh', 'en']) {
+    const copy = messagesFor(lang);
+    assert.equal(typeof copy.copied, 'string');
+    assert.equal(typeof copy.copyFailed, 'string');
+    assert.ok(copy.copyFailed.length > 0, `${lang}.copyFailed is not empty`);
+    // The idle footer is the only place the pointer affordance is advertised.
+    assert.match(copy.hintIdle, /⧉/, `${lang}.hintIdle mentions the copy icon`);
+    // Neither message interpolates the path: a long workspace name would push
+    // the toast wider than the line it is rendered on.
+    assert.doesNotMatch(copy.copied, /\{\{/, `${lang}.copied stays scalar`);
+    assert.doesNotMatch(copy.copyFailed, /\{\{/, `${lang}.copyFailed stays scalar`);
+  }
+});
+
 test('the idle footer leaves the focus key to the host', () => {
   // dsh-tui draws its own `panel-hint-unfocused` line ("Ctrl+B 聚焦侧栏") in
   // the rule below an unfocused panel. The plugin footer sits directly above

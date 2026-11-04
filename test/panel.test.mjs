@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPanel } from '../panel.js';
+import { createPanel, COPY_ICON } from '../panel.js';
 import { RUNNING_FRAMES } from '../model.js';
 
 const NOW = Date.now();
@@ -87,6 +87,8 @@ function createHarness(getSnapshot = snapshot, options = {}) {
   const requests = [];
   const opened = [];
   const toasts = [];
+  const copied = [];
+  const notifications = [];
   let cursor = 0;
   let tick = 0;
   let depth = 0;
@@ -161,7 +163,18 @@ function createHarness(getSnapshot = snapshot, options = {}) {
       },
     },
   };
-  const component = createPanel({ tracker, config: { lang }, jump });
+  // The clipboard writer and the toast service come from the activation in
+  // production. They are injected here so a rendered panel never touches a real
+  // clipboard and every feedback path can be observed.
+  const copy = options.copy ?? (async path => {
+    copied.push(path);
+    return { ok: true, via: 'host' };
+  });
+  const notify = options.notify ?? ((text, notifyOptions) => {
+    notifications.push({ text, options: notifyOptions });
+    return options.notifyReturns ?? true;
+  });
+  const component = createPanel({ tracker, config: { lang }, jump, copy, notify });
 
   function render() {
     cursor = 0;
@@ -183,6 +196,8 @@ function createHarness(getSnapshot = snapshot, options = {}) {
     requests,
     opened,
     toasts,
+    copied,
+    notifications,
     /** Deliver a focused-panel key event and return it (for defaultPrevented). */
     press(input, key = {}) {
       const event = {
@@ -446,17 +461,28 @@ test('panel: every real workspace header offers a + new-session target', () => {
   assert.deepEqual(harness.opened, ['jump']);
 });
 
-test('panel: the + follows the counters with padding on both sides', () => {
+test('panel: the + follows the counters and the copy target is the rightmost icon', () => {
+  // `+` keeps its old place right after the counters; the copy icon is pushed
+  // to the panel's right edge by the flexible gap between them.
   const harness = createHarness();
   const header = findBox(harness.render(), 'g:/repo/app');
   const children = header.children;
   const counterIndex = children.findIndex(child => child?.props?.key === 'counters:/repo/app');
   const plusIndex = children.findIndex(child => child?.props?.key === 'new:/repo/app');
+  const gapIndex = children.findIndex(child => child?.props?.key === 'gap:/repo/app');
+  const copyIndex = children.findIndex(child => child?.props?.key === 'copy:/repo/app');
   assert.ok(counterIndex >= 0, 'the status icons are on the line');
   assert.equal(plusIndex, counterIndex + 1, 'the + sits directly after the counters');
-  assert.equal(children.length, plusIndex + 1, 'nothing is pushed past the +');
   assert.equal(children[plusIndex].props.paddingX, 1, 'the hit target is wider than the glyph');
   assert.equal(textOf(children[plusIndex]), '+');
+  assert.equal(gapIndex, plusIndex + 1, 'the gap sits between the two actions');
+  assert.equal(children[gapIndex].props.flexGrow, 1, 'the gap takes every spare column');
+  assert.equal(children[gapIndex].props.minWidth, 0, 'the gap collapses on a narrow panel');
+  assert.equal(copyIndex, gapIndex + 1, 'the copy icon follows the gap');
+  assert.equal(children.length, copyIndex + 1, 'the copy target is the rightmost child');
+  assert.equal(children[copyIndex].props.paddingX, 1, 'its hit target is wider than the glyph');
+  assert.equal(children[copyIndex].props.flexShrink, 0);
+  assert.equal(textOf(children[copyIndex]), COPY_ICON);
 });
 
 test('panel: the + highlights on hover without filling the header', () => {
@@ -473,6 +499,122 @@ test('panel: the + highlights on hover without filling the header', () => {
 
   hovered.props.onMouseLeave();
   assert.equal(directTexts(findBox(harness.render(), 'new:/repo/app'))[0].props.dimColor, true);
+});
+
+/** Let the fire-and-forget copy handler settle after a click. */
+function settle() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+test('panel: the copy icon copies the workspace path and confirms for three seconds', async () => {
+  const harness = createHarness();
+  const target = findBox(harness.render(), 'copy:/repo/app');
+  assert.ok(target, 'the workspace header renders the copy target');
+  assert.equal(textOf(target), COPY_ICON);
+
+  target.props.onClick({ stopImmediatePropagation() {} });
+  await settle();
+
+  assert.deepEqual(harness.copied, ['/repo/app']);
+  assert.equal(harness.notifications.length, 1);
+  assert.equal(harness.notifications[0].text, '路径已复制');
+  assert.equal(harness.notifications[0].options.timeoutMs, 3000);
+  assert.equal(harness.notifications[0].options.color, 'success');
+  assert.deepEqual(harness.toasts, [], 'the host toast is only the fallback');
+});
+
+test('panel: the copy target copies the normalised path', async () => {
+  const rows = [makeRow({ id: 'cur', cwd: '/repo/app/' })];
+  const harness = createHarness(() => ({
+    groups: [{ key: '/repo/app', cwd: '/repo/app/', title: 'dsh-plugins', running: 0, unread: 0, rows }],
+    running: 0,
+    unread: 0,
+    flatRows: rows,
+    currentId: 'cur',
+    agentsAvailable: true,
+    version: 1,
+  }));
+  findBox(harness.render(), 'copy:/repo/app').props.onClick({ stopImmediatePropagation() {} });
+  await settle();
+  assert.deepEqual(harness.copied, ['/repo/app'], 'one directory, one spelling');
+});
+
+test('panel: a refused toast falls back to the plain panel toast', async () => {
+  const harness = createHarness(snapshot, { notifyReturns: false });
+  findBox(harness.render(), 'copy:/repo/app').props.onClick({ stopImmediatePropagation() {} });
+  await settle();
+  assert.equal(harness.notifications.length, 1, 'the three-second toast was attempted');
+  assert.deepEqual(harness.toasts, ['路径已复制']);
+});
+
+test('panel: a throwing toast service falls back to the panel toast', async () => {
+  const harness = createHarness(snapshot, {
+    notify: () => {
+      throw new Error('toast service exploded');
+    },
+  });
+  findBox(harness.render(), 'copy:/repo/app').props.onClick({ stopImmediatePropagation() {} });
+  await settle();
+  assert.deepEqual(harness.toasts, ['路径已复制']);
+});
+
+test('panel: a failed copy says so instead of claiming success', async () => {
+  const harness = createHarness(snapshot, { copy: async () => ({ ok: false }) });
+  findBox(harness.render(), 'copy:/repo/app').props.onClick({ stopImmediatePropagation() {} });
+  await settle();
+  assert.deepEqual(harness.notifications, []);
+  assert.deepEqual(harness.toasts, ['复制失败：当前环境没有可用的剪贴板']);
+});
+
+test('panel: a throwing writer is caught and reported', async () => {
+  const harness = createHarness(snapshot, {
+    copy: async () => {
+      throw new Error('boom');
+    },
+  });
+  findBox(harness.render(), 'copy:/repo/app').props.onClick({ stopImmediatePropagation() {} });
+  await settle();
+  assert.equal(harness.toasts.length, 1);
+  assert.match(harness.toasts[0], /复制失败/);
+});
+
+test('panel: the copy icon highlights on hover without filling the header', () => {
+  const harness = createHarness();
+  const target = findBox(harness.render(), 'copy:/repo/app');
+  assert.equal(directTexts(target)[0].props.dimColor, true);
+
+  target.props.onMouseEnter();
+  const hovered = findBox(harness.render(), 'copy:/repo/app');
+  const text = directTexts(hovered)[0];
+  assert.equal(text.props.color, 'accent');
+  assert.equal(text.props.bold, true);
+  assert.equal(findBox(harness.render(), 'g:/repo/app').props.backgroundColor, undefined);
+
+  hovered.props.onMouseLeave();
+  assert.equal(directTexts(findBox(harness.render(), 'copy:/repo/app'))[0].props.dimColor, true);
+});
+
+test('panel: a group without a cwd gets no copy target either', () => {
+  const rows = [makeRow({ id: 'cur', cwd: '' })];
+  const harness = createHarness(() => ({
+    groups: [{ key: 'unknown', cwd: '', title: '', running: 0, unread: 0, rows }],
+    running: 0,
+    unread: 0,
+    flatRows: rows,
+    currentId: 'cur',
+    agentsAvailable: true,
+    version: 1,
+  }));
+  const header = findBox(harness.render(), 'g:unknown');
+  assert.equal(findBox(header, 'copy:unknown'), undefined);
+  assert.equal(findBox(header, 'gap:unknown'), undefined, 'no icon, no reserved gap');
+});
+
+test('panel: the copy confirmation follows the panel language', async () => {
+  const harness = createHarness(snapshot, { lang: 'en' });
+  findBox(harness.render(), 'copy:/repo/app').props.onClick({ stopImmediatePropagation() {} });
+  await settle();
+  assert.equal(harness.notifications[0].text, 'Path copied');
 });
 
 test('panel: a group without a cwd gets no +', () => {
@@ -513,7 +655,7 @@ test('panel: header and footer keep the host chrome padding', () => {
   // The host pads its PanelBar and the key hint under the rule by one column;
   // unpadded plugin chrome would sit flush on the border next to them.
   const cases = [
-    { focused: false, hint: '点击行跳转 · + 新建' },
+    { focused: false, hint: '点击行跳转 · + 新建 · ⧉ 复制路径' },
     { focused: true, hint: '↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新' },
   ];
   for (const { focused, hint } of cases) {

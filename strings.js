@@ -41,7 +41,7 @@ const ZH = {
   // The host already draws `panel-hint-unfocused` ("Ctrl+B 聚焦侧栏") in the
   // rule under every unfocused panel, so this footer must not repeat the key:
   // it only advertises what the pointer can do from here.
-  hintIdle: '点击行跳转 · + 新建',
+  hintIdle: '点击行跳转 · + 新建 · ⧉ 复制路径',
   header(running, unread, total) {
     // Static running count: one blank cell stands in for the old spinner.
     const parts = [];
@@ -67,6 +67,8 @@ const ZH = {
   openUnknown: '未知原因',
   markedRead: '已标记为已读',
   cannotMarkRunning: '运行中的会话不能标记已读',
+  copied: '路径已复制',
+  copyFailed: '复制失败：当前环境没有可用的剪贴板',
   panelUnavailable: '收件箱侧栏不可用',
 };
 
@@ -90,7 +92,7 @@ const EN = {
   },
   liveUnavailable: 'This kernel exposes no live session status; showing persisted records only',
   hintFocused: '↑↓ select · Enter jump · n new · m read · r refresh',
-  hintIdle: 'click a row to jump · + new',
+  hintIdle: 'click a row to jump · + new · ⧉ copy path',
   header(running, unread, total) {
     // Static running count: one blank cell stands in for the old spinner.
     const parts = [];
@@ -116,6 +118,8 @@ const EN = {
   openUnknown: 'Unknown reason',
   markedRead: 'Marked as read',
   cannotMarkRunning: 'A running session cannot be marked read',
+  copied: 'Path copied',
+  copyFailed: 'Copy failed: no clipboard available',
   panelUnavailable: 'The inbox panel is unavailable',
 };
 

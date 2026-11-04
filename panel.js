@@ -12,8 +12,15 @@
  * conversation in that workspace (backgrounding the attached one first when it
  * is still running). The panel has no channel, so the click goes through the
  * same one-shot queue and transition scene as a row jump.
+ *
+ * The far right of the same header carries a `⧉` that copies the workspace's
+ * absolute path to the clipboard and confirms it for a few seconds. `+` keeps
+ * its place after the counters; the flexible gap before the copy icon pins that
+ * icon to the panel's right edge, so every project's copy target lines up in
+ * one column and is easy to hit repeatedly.
  */
 
+import { COPY_TOAST_MS } from './copy.js';
 import {
   FRESH_FINISH_MS,
   RUNNING_FRAME_MS,
@@ -27,6 +34,9 @@ import {
   selectedRow,
 } from './model.js';
 import { messagesFor, resolveLang } from './strings.js';
+
+/** The copy-a-workspace-path affordance on a project header. */
+export const COPY_ICON = '⧉';
 
 /**
  * One wheel notch moves one conversation row.
@@ -43,10 +53,17 @@ const WHEEL_ROWS = 1;
  *   tracker: any,
  *   config: {lang?: 'zh' | 'en' | 'auto'},
  *   jump: {sceneId: string, sceneReady: () => boolean, queue: any},
+ *   copy?: (path: string) => Promise<{ok?: boolean}>,
+ *   notify?: (text: string, options?: {timeoutMs?: number, color?: string}) => boolean,
  * }} options
  */
 export function createPanel(options) {
   const { tracker, config, jump } = options;
+  // Rendering a panel must never touch a clipboard on its own, so the default
+  // writer reports a failure instead of falling back to the real one. index.js
+  // always injects the activation's writer and toast service.
+  const copy = typeof options.copy === 'function' ? options.copy : async () => ({ ok: false });
+  const notify = typeof options.notify === 'function' ? options.notify : () => false;
 
   /**
    * @param {any} props
@@ -66,7 +83,9 @@ export function createPanel(options) {
     // The header's `+` keeps its own hover state: overwriting `hoverId` would
     // clear the group's highlight and, because hover does not bubble, the
     // parent would not re-enter when the pointer moves from `+` to the title.
+    // The copy icon does the same for the same reason.
     const [plusHoverKey, setPlusHoverKey] = React.useState(null);
+    const [copyHoverKey, setCopyHoverKey] = React.useState(null);
 
     const showHeader = height >= 3;
     const showFooter = height >= 4;
@@ -253,6 +272,50 @@ export function createPanel(options) {
       host.toast(strings.markedRead);
     }
 
+    /**
+     * Copy a workspace's absolute path and say so for COPY_TOAST_MS.
+     *
+     * The host's panel toast is fixed at four seconds, so the activation's
+     * `tuiToast` service is tried first (`timeoutMs`) and the plain panel toast
+     * is the fallback when that service is unavailable. Neither is awaited: the
+     * clipboard write may spawn a helper and the panel must not stall on it.
+     *
+     * @param {any} group
+     */
+    function copyPath(group) {
+      const path = normalizeCwd(group?.cwd);
+      if (path === '') return;
+      void (async () => {
+        let result;
+        try {
+          result = await copy(path);
+        } catch {
+          result = undefined;
+        }
+        if (result && result.ok === true) {
+          let shown = false;
+          try {
+            shown = notify(strings.copied, { timeoutMs: COPY_TOAST_MS, color: 'success' }) === true;
+          } catch {
+            shown = false;
+          }
+          if (!shown) {
+            try {
+              host.toast(strings.copied);
+            } catch {
+              // A toast failure must not escape a click handler.
+            }
+          }
+          return;
+        }
+        try {
+          host.toast(strings.copyFailed);
+        } catch {
+          // Same: feedback is best-effort once the panel is gone.
+        }
+      })();
+    }
+
     // The handler is registered once per host object; live values come through
     // refs so a re-render does not churn the keyboard listener.
     const moveRef = React.useRef(move);
@@ -304,6 +367,7 @@ export function createPanel(options) {
     function renderGroup(group) {
       const hovered = hoverId === `g:${group.key}`;
       const plusHovered = plusHoverKey === group.key;
+      const copyHovered = copyHoverKey === group.key;
       // Project headers carry status icons, not counts: the same character the
       // rows use for "running" (the chat spinner) and "unread" (the dot), so the
       // folder icon turns in lockstep with the conversation icons. The header
@@ -322,12 +386,21 @@ export function createPanel(options) {
           onMouseEnter: () => setHoverId(`g:${group.key}`),
           onMouseLeave: () => setHoverId(current => (current === `g:${group.key}` ? null : current)),
         },
-        h(Text, {
-          bold: true,
-          dimColor: !hovered,
-          color: hovered ? 'accent' : undefined,
-          wrap: 'truncate-end',
-        }, `▸ ${group.title || strings.unknownProject}`),
+        // The title shrinks before the chrome does: without a shrinkable box a
+        // long workspace name would push the counter and the two header actions
+        // past the panel edge (a row title is boxed for exactly the same
+        // reason). It deliberately does NOT grow — free space belongs to the
+        // gap below, which is what pins the copy icon to the right edge.
+        h(
+          Box,
+          { key: `title:${group.key}`, flexShrink: 1, minWidth: 0 },
+          h(Text, {
+            bold: true,
+            dimColor: !hovered,
+            color: hovered ? 'accent' : undefined,
+            wrap: 'truncate-end',
+          }, `▸ ${group.title || strings.unknownProject}`),
+        ),
         counts.length > 0
           ? h(
             Box,
@@ -345,10 +418,10 @@ export function createPanel(options) {
           )
           : null,
         // The `+` starts a fresh conversation in this workspace, like `/new`
-        // in that cwd. It sits right after the counters (the right of every
-        // header icon); the horizontal padding widens its click target beyond
-        // the glyph. It stays outside the title Text so the click is its own
-        // hit target; the group header itself has no click action.
+        // in that cwd. It sits right after the counters; the horizontal padding
+        // widens its click target beyond the glyph. It stays outside the title
+        // Text so the click is its own hit target; the group header itself has
+        // no click action.
         group.cwd !== ''
           ? h(
             Box,
@@ -368,6 +441,38 @@ export function createPanel(options) {
               dimColor: !plusHovered,
               color: plusHovered ? 'accent' : undefined,
             }, '+'),
+          )
+          : null,
+        // One flexible cell-less gap takes every spare column, so the copy icon
+        // below sits on the panel's right edge for every project. It collapses
+        // to zero on a narrow panel instead of hiding the icon.
+        group.cwd !== ''
+          ? h(Box, { key: `gap:${group.key}`, flexGrow: 1, minWidth: 0 })
+          : null,
+        // The `⧉` copies this workspace's absolute path to the clipboard and
+        // confirms it for a few seconds. The panel has no clipboard API and no
+        // channel, so the write is the activation's writer (see copy.js), which
+        // reuses dsh-tui's own clipboard implementation. No cwd, no target —
+        // the same rule the `+` follows.
+        group.cwd !== ''
+          ? h(
+            Box,
+            {
+              key: `copy:${group.key}`,
+              flexShrink: 0,
+              paddingX: 1,
+              onMouseEnter: () => setCopyHoverKey(group.key),
+              onMouseLeave: () => setCopyHoverKey(current => (current === group.key ? null : current)),
+              onClick: event => {
+                event?.stopImmediatePropagation?.();
+                copyPath(group);
+              },
+            },
+            h(Text, {
+              bold: copyHovered,
+              dimColor: !copyHovered,
+              color: copyHovered ? 'accent' : undefined,
+            }, COPY_ICON),
           )
           : null,
       );

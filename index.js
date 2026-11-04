@@ -23,6 +23,7 @@
  */
 
 import Schema from '@deepseek-ai/schemastery';
+import { createClipboard } from './copy.js';
 import { readAttachedSessionId } from './current.js';
 import { JUMP_SCENE_ID, createJumpQueue, createJumpScene } from './jump.js';
 import { createPanel } from './panel.js';
@@ -120,6 +121,37 @@ export function apply(ctx, config = {}) {
     let panelsService;
     let panelId = '';
     const jump = { sceneId: JUMP_SCENE_ID, queue, sceneReady: () => sceneReady };
+
+    // The copy icon writes through dsh-tui's own clipboard helper (see
+    // copy.js). The writer is created once per activation and loads the host
+    // module lazily on the first click, so a panel nobody copies from never
+    // pulls host internals into the plugin.
+    const clipboard = createClipboard();
+
+    // The panel toast has no timeout knob (the host fixes it at four seconds),
+    // while the confirmation should last the three seconds the feature
+    // promises. `tuiToast` is the public service that takes one; when it is
+    // missing the panel falls back to `host.toast`.
+    let toasts;
+    try {
+      toasts = ctx?.get?.('tuiToast', false);
+    } catch {
+      toasts = undefined;
+    }
+    /**
+     * @param {string} text
+     * @param {{timeoutMs?: number, color?: string}} [options]
+     * @returns {boolean} whether a host sink accepted the toast
+     */
+    function notify(text, options) {
+      if (!toasts || typeof toasts.show !== 'function') return false;
+      try {
+        return toasts.show(text, options) === true;
+      } catch (error) {
+        warn('showing a toast failed', error);
+        return false;
+      }
+    }
 
     tracker.attach();
     void tracker.load();
@@ -377,7 +409,13 @@ export function apply(ctx, config = {}) {
      * @param {any} panels
      */
     function mountPanel(ready, panels) {
-      const Panel = createPanel({ tracker, config: settings, jump });
+      const Panel = createPanel({
+        tracker,
+        config: settings,
+        jump,
+        copy: path => clipboard.copy(path),
+        notify,
+      });
       let dispose;
       try {
         dispose = panels.register({

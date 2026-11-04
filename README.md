@@ -13,7 +13,7 @@ A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 This is a community plugin, not an official dsh-TUI component. It is built
 against dsh-TUI 0.17.0 and uses only public host seams.
 
-> **Status:** published as `dsh-tui-workspace-sidebar@0.1.2`. Install with
+> **Status:** published as `dsh-tui-workspace-sidebar@0.1.3`. Install with
 > `dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar`; the checkout
 > install below remains available for development.
 
@@ -27,16 +27,18 @@ against dsh-TUI 0.17.0 and uses only public host seams.
 
 It uses a normal side-panel tab instead of a full-screen view: grouped by
 project, one line per conversation, hover to highlight, click to jump. A `+`
-after a project's status icons starts a fresh conversation in that workspace.
+after a project's status icons starts a fresh conversation in that workspace,
+and a `⧉` on the header's right edge copies the workspace's absolute path to
+the clipboard.
 
 ```
  2 运行 · ● 2 未读
-▸ dsh-plugins ⠋ ● +
+▸ dsh-plugins ⠋ ● +              ⧉
   ● 后台计划                  待回答
   ● 重写 README               5 分钟前
   ⠋ 给补丁跑个验证            2 分钟前
 ❯ ✓ 修复登录页样式            刚刚
-▸ other-project +
+▸ other-project +                ⧉
   ✓ 更新部署脚本              3 小时前
 ↑↓ 选择 · Enter 跳转 · n 新建 · m 已读 · r 刷新
 ```
@@ -257,6 +259,7 @@ metadata is English-only host metadata.
 | hover a row | fill it (transient; selecting a row does not fill it) |
 | click a row | jump to that workspace + session |
 | click a project's `+` | start a fresh conversation in that workspace (see below) |
+| click a project's `⧉` | copy that workspace's absolute path, confirmed for three seconds (see below) |
 | `↑` / `↓` | move the selection (while the panel is focused) |
 | `Enter` | jump to the selected conversation |
 | `n` | start a fresh conversation in the selected row's workspace |
@@ -293,8 +296,8 @@ conversation you came from is still one click away until its window closes.
 
 ### New session from a workspace header
 
-`+` sits after the running/unread status icons on every project header, to the
-right of all the header icons. Its cell is padded on both sides, so the click
+`+` sits after the running/unread status icons on every project header, just
+left of the right-edge copy icon. Its cell is padded on both sides, so the click
 target is a little wider than the glyph; `n` does the same for the workspace of
 the selected row. The `+` is omitted for the "unknown project" bucket, which
 has no cwd to start a session in. Clicking it behaves like `/new` inside that
@@ -315,6 +318,37 @@ before). When the host refuses (a turn started in between, the directory
 disappeared, the handoff failed) the channel's own notice explains why and the
 card closes. A kernel that exposes neither `newSession` nor `switchWorkspace`
 gets "当前内核不支持新建会话".
+
+### Copy a workspace path
+
+The right edge of every project header carries a `⧉`: clicking it puts that
+workspace's **absolute path** on the system clipboard and shows "Path copied"
+for three seconds on the host's notice surface. `+` keeps its place after the
+status icons; the flexible gap between the two is what pins `⧉` to the panel's
+right edge, so every project's copy target lines up in one column and repeated
+clicks do not need to be re-aimed. Its cell is padded on both sides too, so the
+click target is wider than the glyph.
+
+- **What is copied** — the normalised path the groups are keyed by: trailing
+  `/` removed, `\` folded to `/`. It is the same path `/new` and the workspace
+  handoff use.
+- **No icon for the unknown bucket** — a header whose rows have no cwd renders
+  neither `+` nor `⧉`, and reserves no gap for them.
+- **How the write happens** — the plugin reuses dsh-tui's own clipboard
+  implementation (`setClipboard` in `lib/types/ink/termio/osc.js`): native tools
+  first (macOS `pbcopy`, Windows `clip`, Linux `wl-copy`/`xclip`/`xsel`), then
+  the tmux paste buffer, then the OSC 52 sequence written to stdout — the same
+  path a mouse selection copy takes. That module is not in the host's public
+  export map, so it is located through the running process's
+  `DSH_PROFILE_DIR`; if a future release moves the file, the plugin falls back to
+  its own "native tool + OSC 52" writer. Over SSH the native clipboard is never
+  touched (it would be the remote machine's).
+- **Toast length** — the public `tuiToast.show(text, { timeoutMs: 3000 })`
+  service is used so the confirmation really lasts three seconds; when it is
+  unavailable the panel falls back to `host.toast` (fixed at four seconds by the
+  host).
+- **No keyboard shortcut** — `⧉` is pointer-only; keyboard navigation
+  (`↑`/`↓`/`Enter`/`n`/`m`/`r`) is unchanged.
 
 ## Questions and plan reviews
 
@@ -492,6 +526,18 @@ the reporting path and the full data-handling note.
   rest at the next sweep.
 - **One lifecycle.** Do not install two copies under different names: the
   second activation cannot register the same panel/scene ids.
+- **Copying rides on a host-internal file.** `⧉` prefers dsh-tui's
+  `lib/types/ink/termio/osc.js`, which is not in the host's public export map, so
+  it is located through `DSH_PROFILE_DIR` (or `DSH_HOME` + `DSH_PROFILE`) to hit
+  the copy that is actually running. If a future dsh-tui moves it, the plugin
+  falls back to its own "native tool + OSC 52" writer and the feature keeps
+  working; if no clipboard is reachable at all it toasts a failure instead of
+  pretending. Over plain SSH with a terminal that ignores OSC 52 (iTerm2's
+  default, for example) the write can be silently lost — the same limit
+  dsh-tui's own selection copy has.
+- **No confirmation in a fullscreen panel.** The three-second toast renders on
+  the chat column's notice surface; the copy itself still works when the sidebar
+  is zoomed to fill the screen, but the confirmation is not visible.
 
 ## Development
 
@@ -513,7 +559,7 @@ and include provenance.
 ## Tests
 
 ```sh
-npm test        # node --test: config, model, tracker, store, current, jump, apply, strings, panel, questions, manifest
+npm test        # node --test: config, model, tracker, store, current, jump, apply, strings, panel, copy, questions, manifest
 ```
 
 The tests cover the transition table (`running → finished → seen`), the
@@ -538,6 +584,17 @@ taller panel revealing the folded rows again), the right-pointing project glyph,
 hover-only row fill, and the
 panel/scene/command/shortcut registration (including feature-detected
 degradation).
+
+The copy tests cover the host-module lookup order (`DSH_PROFILE_DIR` →
+`DSH_HOME`/`DSH_PROFILE` → package resolution), emitting the sequence
+`setClipboard` returns, the fallback when that module is missing or throws, the
+per-platform native command choice and order, never touching the native
+clipboard over SSH, the UTF-8 base64 payload of the OSC 52 sequence, and the
+failure paths for an empty path and a broken stdout. The panel side covers the
+right-edge icon with `+` unmoved, copying the normalised path, the three-second
+confirmation (`timeoutMs: 3000`), falling back to the panel toast when the toast
+service refuses or throws, the failure toast, and a cwd-less group rendering
+neither the icon nor the reserved gap.
 
 The question tests cover the prepended registration, the waiting dot of an ask
 the host claims (the attached session's own questionnaire / plan review), the

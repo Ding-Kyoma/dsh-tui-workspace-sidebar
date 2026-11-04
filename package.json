@@ -6,6 +6,7 @@
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
+    "./copy": "./copy.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -15,6 +16,7 @@
     "tracker.js",
     "store.js",
     "panel.js",
+    "copy.js",
     "jump.js",
     "questions.js",
     "current.js",
