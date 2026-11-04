@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "workspace-sidebar",
   "name": "Workspace sidebar",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "facets": {
     "host": {
       "entry": "index.js",

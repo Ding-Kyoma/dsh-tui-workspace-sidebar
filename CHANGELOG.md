@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-11-04
+
+### Added
+
+- Every project header now carries a `⧉` on its right edge. Clicking it puts
+  that workspace's absolute path (normalised exactly like `/new` uses it) on the
+  system clipboard and confirms with a three-second "Path copied" toast. The
+  write reuses dsh-TUI's own clipboard helper — native tools, the tmux paste
+  buffer, then OSC 52 — located at runtime through `DSH_PROFILE_DIR`, and falls
+  back to a self-contained native/OSC 52 writer when that module cannot be
+  loaded. `+` keeps its place after the status icons; a flexible gap pins the
+  copy target to the panel's right edge, and a header without a cwd renders
+  neither icon. The confirmation asks the public
+  `tuiToast.show(text, { timeoutMs: 3000 })` service for the exact length and
+  falls back to the panel toast when it is unavailable.
+- Tests for the clipboard writer (lookup order, host reuse and fallback,
+  per-platform commands, SSH and failure paths), the header layout and hover
+  behaviour, the copy click paths, and the `tuiToast` feature detection.
+
 ## [0.1.2] - 2026-11-02
 
 ### Fixed
@@ -18,6 +37,7 @@ All notable changes to this project are documented here. The format follows
   questions before running, running before done), and an exact anchor tie falls
   back to the first-seen slot, then to the path.
 
+[0.1.3]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.1...v0.1.2
 
 ## [0.1.1] - 2026-10-31
