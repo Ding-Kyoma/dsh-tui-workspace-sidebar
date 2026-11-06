@@ -25,7 +25,7 @@
 import Schema from '@deepseek-ai/schemastery';
 import { createClipboard } from './copy.js';
 import { readAttachedSessionId } from './current.js';
-import { JUMP_SCENE_ID, createJumpQueue, createJumpScene } from './jump.js';
+import { JUMP_SCENE_ID, createJumpQueue, createJumpScene, createSceneGuard } from './jump.js';
 import { createPanel } from './panel.js';
 import { createQuestionRelay } from './questions.js';
 import { DEFAULT_STATE_FILE, createStore } from './store.js';
@@ -120,6 +120,7 @@ export function apply(ctx, config = {}) {
     let sceneReady = false;
     let panelsService;
     let panelId = '';
+    /** `guard` is attached by mountHost once `tuiScenes` resolves. */
     const jump = { sceneId: JUMP_SCENE_ID, queue, sceneReady: () => sceneReady };
 
     // The copy icon writes through dsh-tui's own clipboard helper (see
@@ -230,7 +231,7 @@ export function apply(ctx, config = {}) {
     /**
      * @param {any} ready
      */
-    function mountScene(ready) {
+    function mountScene(ready, guard) {
       let scenes;
       try {
         scenes = ready.get('tuiScenes', false);
@@ -249,6 +250,10 @@ export function apply(ctx, config = {}) {
         // A background question is released only after this scene has actually
         // adopted the session; the relay itself never forwards on its own.
         deliverQuestion: id => relay?.deliver(id),
+        // First effect = really on screen. Only a scene the host accepted and
+        // never mounted can trip the guard (a pending questionnaire or plan
+        // review owns the terminal then; see createSceneGuard).
+        onMounted: () => guard?.settle(),
       });
       let dispose;
       try {
@@ -370,6 +375,10 @@ export function apply(ctx, config = {}) {
      * therefore share this `ready` (the same fiber), which is what makes the
      * panel's click-to-jump work at all.
      *
+     * The guard rides the same context for the same reason: closing the
+     * trampoline is an owner-checked `tuiScenes.close()`, so it must be called
+     * from the activation that registered it.
+     *
      * @param {any} ready
      */
     function mountHost(ready) {
@@ -390,10 +399,37 @@ export function apply(ctx, config = {}) {
         warn('tuiPanels is unavailable; the sidebar panel is disabled');
         return;
       }
-      if (!mountPanel(ready, panels)) return;
+      // The stranded-scene guard exists before the panel: a click on the very
+      // first render must already be able to arm it. `scenes` is the traceable
+      // proxy bound to THIS activation — the same one that registers the scene
+      // below — so `close()` passes the host's owner check.
+      const guard = createSceneGuard({
+        close: () => {
+          if (!scenes || typeof scenes.close !== 'function') return;
+          scenes.close();
+        },
+        logger,
+      });
+      jump.guard = guard;
+      if (!mountPanel(ready, panels)) {
+        guard.dispose();
+        jump.guard = undefined;
+        return;
+      }
 
-      if (scenes && typeof scenes.register === 'function') mountScene(ready);
+      if (scenes && typeof scenes.register === 'function') mountScene(ready, guard);
       else warn('tuiScenes is unavailable; sidebar actions are disabled');
+
+      if (typeof ready.effect === 'function') {
+        try {
+          ready.effect(() => () => {
+            guard.dispose();
+            if (jump.guard === guard) jump.guard = undefined;
+          }, 'workspace-sidebar jump guard');
+        } catch (error) {
+          warn('registering the guard lifecycle effect failed', error);
+        }
+      }
 
       if (typeof ready.inject === 'function') {
         ready.inject(['tuiPluginHost'], mountCommand);

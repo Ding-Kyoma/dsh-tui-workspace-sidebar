@@ -86,6 +86,7 @@ function createHarness(getSnapshot = snapshot, options = {}) {
   const pendingEffects = [];
   const requests = [];
   const opened = [];
+  const jumpCalls = [];
   const toasts = [];
   const copied = [];
   const notifications = [];
@@ -128,6 +129,7 @@ function createHarness(getSnapshot = snapshot, options = {}) {
     },
     openScene(id) {
       opened.push(id);
+      jumpCalls.push('open');
       return options.openScene === undefined ? true : options.openScene(id);
     },
     onKey(listener) {
@@ -160,6 +162,20 @@ function createHarness(getSnapshot = snapshot, options = {}) {
       },
       clear() {
         requests.length = 0;
+      },
+    },
+    // The stranded-scene guard comes from the activation in production; here it
+    // records the arm/settle handshake and the notice it would show.
+    guard: {
+      strandedCallbacks: [],
+      settled: 0,
+      arm(onStranded) {
+        jumpCalls.push('arm');
+        this.strandedCallbacks.push(onStranded);
+      },
+      settle() {
+        jumpCalls.push('settle');
+        this.settled += 1;
       },
     },
   };
@@ -195,6 +211,8 @@ function createHarness(getSnapshot = snapshot, options = {}) {
     },
     requests,
     opened,
+    jumpCalls,
+    guard: jump.guard,
     toasts,
     copied,
     notifications,
@@ -649,6 +667,37 @@ test('panel: n creates a session in the selected row workspace', () => {
     { kind: 'new', cwd: '/repo/app', label: 'dsh-plugins', lang: 'zh' },
   ]);
   assert.deepEqual(harness.opened, ['jump']);
+});
+
+test('panel: a row jump arms the guard before the scene is opened', () => {
+  const harness = createHarness();
+  harness.render();
+  harness.press('', { downArrow: true });
+  harness.press('', { return: true });
+  assert.deepEqual(harness.jumpCalls, ['arm', 'open'], 'arm precedes open');
+  assert.deepEqual(harness.opened, ['jump']);
+  assert.deepEqual(harness.requests.map(item => item.id), ['unread']);
+});
+
+test('panel: a refused scene open settles the guard and clears the queue', () => {
+  const harness = createHarness(snapshot, { openScene: () => false });
+  harness.render();
+  harness.press('', { downArrow: true });
+  harness.press('', { return: true });
+  assert.deepEqual(harness.jumpCalls, ['arm', 'open', 'settle']);
+  assert.equal(harness.guard.settled, 1);
+  assert.deepEqual(harness.requests, []);
+  assert.ok(harness.toasts.some(text => text.includes('场景')), harness.toasts.join('|'));
+});
+
+test('panel: a stranded scene tells the person a pending panel owns the screen', () => {
+  const harness = createHarness();
+  harness.render();
+  harness.press('', { downArrow: true });
+  harness.press('', { return: true });
+  assert.equal(harness.guard.strandedCallbacks.length, 1);
+  harness.guard.strandedCallbacks[0]();
+  assert.deepEqual(harness.toasts, ['有未回答的提问或审批，先处理它再切换会话']);
 });
 
 test('panel: header and footer keep the host chrome padding', () => {
