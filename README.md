@@ -288,19 +288,6 @@ Expect a brief full-screen card (`▣ project / title / 正在打开会话…`) 
 duration of a jump. It is a trampoline, not a second inbox; there is no
 workspace list there.
 
-**Clicking a row while a question or approval is pending.** The host's
-"interrupt lane" paints a pending questionnaire / plan review full-screen
-whenever a full-screen page is open, and that early return sits above the
-plugin-scene branch. When a panel is already pending at click time, the scene
-is accepted but **never mounts** — so its `close()` never runs and the review
-would own the terminal until answered. The plugin therefore arms a guard
-(`createSceneGuard`) in `mountHost`: `arm()` on the click, `settle()` from the
-scene's first effect, and if the scene has not mounted within 600 ms it calls
-`tuiScenes.close()` from the same activation, clears the one-shot queue, and
-toasts "有未回答的提问或审批，先处理它再切换会话". The review stays in the chat
-column with the sidebar visible instead of going full-screen. A normal click
-mounts within one or two commits, so the guard stands down immediately.
-
 Failure reasons are mapped to toasts and the row stays unread: `occupied`
 (another TUI terminal holds the session, with its pid), `working`,
 `cancelled`, `failed`, `unavailable` (the adapter already toasts this one).
@@ -400,11 +387,6 @@ For those the plugin registers a fallback answerer on the same waterfall:
    plan-review panel appears, and the answer resolves the parked tool call. A
    cancellation (`ASK_CANCELLED`) propagates normally, so cancelling a plan
    review keeps you in plan mode instead of producing a `NO_PROVIDER` error.
-   The release happens AFTER the trampoline closes (`performJump` closes, then
-   `deliver()` runs on the next task): the host's interrupt lane paints a
-   pending panel full-screen while a full-screen page is open, so the reverse
-   order flashed the review over the whole terminal. The review now always
-   lands in the chat column, with the sidebar still visible.
 
 This is intentionally not automatic. The TUI's question store is shared across
 conversations, and its answerer is bound to whichever session the channel is
@@ -528,12 +510,7 @@ the reporting path and the full data-handling note.
   persists.
 - **Transition card.** The full-screen flash is the only public-API path to a
   session switch in 0.17.0. If a direct `host.openSession`-style API appears,
-  the panel will prefer it and keep the scene as a fallback. When the host
-  accepts the scene but never mounts it (the interrupt lane is showing a
-  pending question or approval), the plugin's guard closes it again — see
-  "Clicking a row while a question or approval is pending". That is the only
-  remedy available to a plugin: the interrupt lane is host behaviour, and a
-  plugin cannot opt out of it or know synchronously which side will win.
+  the panel will prefer it and keep the scene as a fallback.
 - **New sessions need the scene too.** `+` and `n` use the same registered
   scene; without `tuiScenes` they toast "无法新建：场景服务不可用" and do
   nothing. Backgrounding a running turn creates its fresh session in the cwd

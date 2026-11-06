@@ -3,10 +3,8 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import {
   KIND_NEW,
-  SCENE_MOUNT_GRACE_MS,
   createJumpQueue,
   createJumpScene,
-  createSceneGuard,
   performJump,
   performNewSession,
   workspaceTargetFor,
@@ -36,7 +34,7 @@ test('jump queue ignores empty targets and clear() drops the slot', () => {
   assert.equal(queue.peek(), undefined);
 });
 
-test('performJump: success marks the row, closes, then releases the question', async () => {
+test('performJump: success marks the row and closes', async () => {
   const calls = [];
   const result = await performJump({
     channel: { resumeTo: async id => { calls.push(id); return { ok: true }; } },
@@ -45,40 +43,9 @@ test('performJump: success marks the row, closes, then releases the question', a
     onOpened: id => calls.push(`opened:${id}`),
     notify: text => calls.push(`notify:${text}`),
     close: () => calls.push('close'),
-    // Run the deferred release inline: the ORDER is what matters here, and the
-    // scene must already be closed when the question is re-dispatched.
-    defer: callback => callback(),
   });
   assert.deepEqual(result, { ok: true });
-  assert.deepEqual(calls, ['s1', 'seen:s1', 'close', 'opened:s1']);
-});
-
-test('performJump: the default release runs one task later, after the close', async () => {
-  const calls = [];
-  const result = await performJump({
-    channel: { resumeTo: async () => ({ ok: true }) },
-    target: { id: 's1' },
-    onOpened: id => calls.push(`opened:${id}`),
-    close: () => calls.push('close'),
-  });
-  assert.deepEqual(result, { ok: true });
-  // Nothing is released inside the jump itself any more.
-  assert.deepEqual(calls, ['close']);
-  await new Promise(resolve => setTimeout(resolve, 20));
-  assert.deepEqual(calls, ['close', 'opened:s1']);
-});
-
-test('performJump: a throwing release never reopens or fails the jump', async () => {
-  const calls = [];
-  const result = await performJump({
-    channel: { resumeTo: async () => ({ ok: true }) },
-    target: { id: 's1' },
-    onOpened: () => { throw new Error('relay exploded'); },
-    close: () => calls.push('close'),
-    defer: callback => callback(),
-  });
-  assert.deepEqual(result, { ok: true });
-  assert.deepEqual(calls, ['close']);
+  assert.deepEqual(calls, ['s1', 'seen:s1', 'opened:s1', 'close']);
 });
 
 test('performJump: failures notify, never mark seen, and close the scene', async () => {
@@ -418,122 +385,4 @@ test('performNewSession: a missing or non-new target closes silently', async () 
     assert.deepEqual(result, { ok: false, reason: 'cancelled' });
     assert.deepEqual(calls, ['close']);
   }
-});
-
-/** A deterministic timer double: `fire()` runs every live handle once. */
-function fakeClock() {
-  const timers = [];
-  return {
-    timers,
-    setTimeout(callback, ms) {
-      const handle = {
-        callback,
-        ms,
-        cancelled: false,
-        fired: false,
-        unrefCalled: false,
-        unref() {
-          handle.unrefCalled = true;
-          return handle;
-        },
-      };
-      timers.push(handle);
-      return handle;
-    },
-    clearTimeout(handle) {
-      handle.cancelled = true;
-    },
-    fire() {
-      for (const timer of timers) {
-        if (timer.cancelled || timer.fired) continue;
-        timer.fired = true;
-        timer.callback();
-      }
-    },
-  };
-}
-
-test('scene guard: a scene that mounts stands the guard down', () => {
-  const clock = fakeClock();
-  const closed = [];
-  const notices = [];
-  const guard = createSceneGuard({ close: () => closed.push('close'), ...clock });
-  guard.arm(() => notices.push('notice'));
-  assert.equal(guard.pending, true);
-  assert.equal(clock.timers.length, 1);
-  assert.equal(clock.timers[0].ms, SCENE_MOUNT_GRACE_MS);
-  guard.settle();
-  assert.equal(guard.pending, false);
-  clock.fire();
-  assert.deepEqual(closed, []);
-  assert.deepEqual(notices, []);
-});
-
-test('scene guard: a scene the host never mounts is closed once and reported', () => {
-  const clock = fakeClock();
-  const closed = [];
-  const notices = [];
-  const guard = createSceneGuard({ close: () => closed.push('close'), ...clock });
-  guard.arm(() => notices.push('notice'));
-  clock.fire();
-  assert.deepEqual(closed, ['close']);
-  assert.deepEqual(notices, ['notice']);
-  assert.equal(guard.pending, false);
-  clock.fire();
-  assert.deepEqual(closed, ['close'], 'the stranded action runs once');
-  assert.deepEqual(notices, ['notice']);
-});
-
-test('scene guard: re-arming keeps only the latest click', () => {
-  const clock = fakeClock();
-  const closed = [];
-  const notices = [];
-  const guard = createSceneGuard({ close: () => closed.push('close'), ...clock });
-  guard.arm(() => notices.push('first'));
-  guard.arm(() => notices.push('second'));
-  assert.equal(clock.timers.length, 2);
-  assert.equal(clock.timers[0].cancelled, true);
-  clock.fire();
-  assert.deepEqual(closed, ['close']);
-  assert.deepEqual(notices, ['second']);
-});
-
-test('scene guard: dispose drops the timer without closing anything', () => {
-  const clock = fakeClock();
-  const closed = [];
-  const notices = [];
-  const guard = createSceneGuard({ close: () => closed.push('close'), ...clock });
-  guard.arm(() => notices.push('notice'));
-  guard.dispose();
-  clock.fire();
-  assert.deepEqual(closed, []);
-  assert.deepEqual(notices, []);
-  assert.equal(guard.pending, false);
-});
-
-test('scene guard: a refused close still reports and logs the failure', () => {
-  const clock = fakeClock();
-  const warnings = [];
-  const notices = [];
-  const guard = createSceneGuard({
-    close: () => {
-      throw new Error('belongs to another activation');
-    },
-    logger: { warn: (message, error) => warnings.push([message, error?.message]) },
-    ...clock,
-  });
-  guard.arm(() => notices.push('notice'));
-  clock.fire();
-  assert.deepEqual(notices, ['notice']);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0][0], /stranded/);
-  assert.equal(warnings[0][1], 'belongs to another activation');
-});
-
-test('scene guard: the grace timer is unref\'d so it cannot hold the process open', () => {
-  const clock = fakeClock();
-  const guard = createSceneGuard({ close: () => {}, ...clock });
-  guard.arm();
-  assert.equal(clock.timers[0].unrefCalled, true);
-  guard.settle();
 });

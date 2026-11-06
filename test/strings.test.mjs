@@ -43,18 +43,6 @@ test('new-session copy exists in both languages and is advertised in the footer'
   }
 });
 
-test('pending-panel copy exists in both languages and stays scalar', () => {
-  const zh = messagesFor('zh');
-  const en = messagesFor('en');
-  assert.equal(zh.jumpPending, '有未回答的提问或审批，先处理它再切换会话');
-  assert.equal(en.jumpPending, 'Answer the pending question or approval before switching');
-  for (const copy of [zh, en]) {
-    assert.ok(copy.jumpPending.length > 0);
-    // The toast is a single line: no interpolation, no path.
-    assert.doesNotMatch(copy.jumpPending, /\{\{/);
-  }
-});
-
 test('copy-path copy exists in both languages and is advertised in the footer', () => {
   assert.equal(messagesFor('zh').copied, '路径已复制');
   assert.equal(messagesFor('en').copied, 'Path copied');

@@ -52,12 +52,7 @@ const WHEEL_ROWS = 1;
  * @param {{
  *   tracker: any,
  *   config: {lang?: 'zh' | 'en' | 'auto'},
- *   jump: {
- *     sceneId: string,
- *     sceneReady: () => boolean,
- *     queue: any,
- *     guard?: {arm: (onStranded?: () => void) => void, settle: () => void},
- *   },
+ *   jump: {sceneId: string, sceneReady: () => boolean, queue: any},
  *   copy?: (path: string) => Promise<{ok?: boolean}>,
  *   notify?: (text: string, options?: {timeoutMs?: number, color?: string}) => boolean,
  * }} options
@@ -228,13 +223,7 @@ export function createPanel(options) {
         return;
       }
       jump.queue.request({ id: target.id, title: target.title, cwd: target.cwd, lang });
-      // Arm BEFORE the open: the host may accept the scene and still cover it
-      // with a pending questionnaire / plan review, in which case the scene
-      // never mounts and would hold the panel full-screen forever. The guard
-      // closes it again and says why; see createSceneGuard.
-      jump.guard?.arm(() => host.toast(strings.jumpPending));
       if (host.openScene(jump.sceneId) !== true) {
-        jump.guard?.settle();
         jump.queue.clear();
         host.toast(strings.jumpUnavailable);
       }
@@ -253,9 +242,7 @@ export function createPanel(options) {
         return;
       }
       jump.queue.request({ kind: 'new', cwd: path, label, lang });
-      jump.guard?.arm(() => host.toast(strings.jumpPending));
       if (host.openScene(jump.sceneId) !== true) {
-        jump.guard?.settle();
         jump.queue.clear();
         host.toast(strings.newUnavailable);
       }

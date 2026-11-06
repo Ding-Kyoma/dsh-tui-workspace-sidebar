@@ -127,19 +127,6 @@ function messageOf(error) {
 }
 
 /**
- * Run `callback` after the current task, so the host has committed the scene
- * close before a re-dispatched question reaches its store. The timer is
- * unref'd: a pending release must never keep the process alive.
- *
- * @param {() => void} callback
- */
-function deferToNextTask(callback) {
-  const timer = setTimeout(callback, 0);
-  if (typeof timer?.unref === 'function') timer.unref();
-  return timer;
-}
-
-/**
  * Resume `target` through the scene's channel.
  *
  * Extracted from the React component so the failure matrix is testable without
@@ -152,7 +139,6 @@ function deferToNextTask(callback) {
  *   onOpened?: (id: string) => void,
  *   notify?: (text: string) => void,
  *   close?: () => void,
- *   defer?: (callback: () => void) => unknown,
  * }} input
  * @returns {Promise<{ok: boolean, reason?: string}>}
  */
@@ -198,29 +184,13 @@ export async function performJump(input) {
     } catch {
       // Marking the row read is a convenience; the switch already happened.
     }
-    // Close the trampoline BEFORE the parked question is re-dispatched. The
-    // host paints a pending questionnaire / plan review full-screen while a
-    // full-screen page is current ("the interrupt lane"), so releasing the ask
-    // while this scene is still the current page would flash the review over
-    // the whole terminal. The close lands synchronously; the release waits one
-    // task so the host has committed the scene teardown before the question
-    // enters its store (a sync-lane render would otherwise read the old page).
-    const outcome = done({ ok: true });
-    const release = () => {
-      try {
-        input.onOpened?.(target.id);
-      } catch {
-        // Releasing a parked question must not turn a successful jump into a
-        // failure; the inbox row still shows the waiting dot.
-      }
-    };
-    const defer = typeof input.defer === 'function' ? input.defer : deferToNextTask;
     try {
-      defer(release);
+      input.onOpened?.(target.id);
     } catch {
-      release();
+      // Releasing a parked question must not turn a successful jump into a
+      // failure; the inbox row still shows the waiting dot.
     }
-    return outcome;
+    return done({ ok: true });
   }
 
   const reason = result && typeof result.reason === 'string' ? result.reason : 'unknown';
@@ -360,117 +330,15 @@ export async function performNewSession(input) {
 }
 
 /**
- * A scene that has not mounted within this window is covered by the host.
- *
- * The normal path mounts the scene on the next commit (one or two frames), so
- * this is a generous multiple of the expected latency: a false positive costs
- * one cancelled click, never a wrong transition.
- */
-export const SCENE_MOUNT_GRACE_MS = 600;
-
-/**
- * The guard that keeps the transition scene from stranding the whole terminal.
- *
- * dsh-tui paints a pending questionnaire / plan review full-screen whenever any
- * full-screen page is open ("the interrupt lane"), and that early return sits
- * above the plugin-scene branch. A row click landing while such a panel is
- * pending therefore opens the scene WITHOUT ever mounting it: `openScene()`
- * reports success, the scene's effect never runs, `close()` is never called,
- * and the panel owns the terminal until the person answers. The scene cannot
- * clean up after itself — it is never given a turn — so the activation owns
- * that duty: arm on the open request, settle from the scene's first effect,
- * and close the scene through the same activation when the window expires.
- *
- * @param {{
- *   close?: () => void,
- *   graceMs?: number,
- *   setTimeout?: (callback: () => void, ms: number) => any,
- *   clearTimeout?: (handle: any) => void,
- *   logger?: {warn?: (message: string, error?: unknown) => void},
- * }} [options]
- */
-export function createSceneGuard(options = {}) {
-  const graceMs =
-    Number.isFinite(options.graceMs) && options.graceMs > 0 ? options.graceMs : SCENE_MOUNT_GRACE_MS;
-  const schedule = typeof options.setTimeout === 'function' ? options.setTimeout : setTimeout;
-  const cancel = typeof options.clearTimeout === 'function' ? options.clearTimeout : clearTimeout;
-  const { logger } = options;
-  let armed = false;
-  let stranded;
-  let handle;
-
-  function stop() {
-    if (handle === undefined) return;
-    try {
-      cancel(handle);
-    } catch {
-      // A timer that already fired is not an error.
-    }
-    handle = undefined;
-  }
-
-  function fire() {
-    handle = undefined;
-    if (!armed) return;
-    armed = false;
-    const report = stranded;
-    stranded = undefined;
-    try {
-      options.close?.();
-    } catch (error) {
-      logger?.warn?.('closing a stranded jump scene failed', error);
-    }
-    try {
-      report?.();
-    } catch {
-      // The notice is cosmetic; the scene is already closed.
-    }
-  }
-
-  return {
-    /**
-     * The panel is about to open the transition scene.
-     *
-     * @param {() => void} [onStranded] runs once when the scene never mounted
-     */
-    arm(onStranded) {
-      armed = true;
-      stranded = typeof onStranded === 'function' ? onStranded : undefined;
-      stop();
-      const timer = schedule(fire, graceMs);
-      if (typeof timer?.unref === 'function') timer.unref();
-      handle = timer;
-    },
-    /** The scene mounted (its first effect ran): the guard is done. */
-    settle() {
-      armed = false;
-      stranded = undefined;
-      stop();
-    },
-    /** The activation is going away; drop the timer without closing anything. */
-    dispose() {
-      armed = false;
-      stranded = undefined;
-      stop();
-    },
-    /** Whether an open request is still waiting for its scene to mount. */
-    get pending() {
-      return armed;
-    },
-  };
-}
-
-/**
  * @param {{
  *   queue: ReturnType<typeof createJumpQueue>,
  *   tracker: {markSeen: (id: string) => boolean, setCurrent?: (id: string) => void},
  *   config: {lang?: 'zh' | 'en' | 'auto'},
  *   deliverQuestion?: (id: string) => void,
- *   onMounted?: () => void,
  * }} options
  */
 export function createJumpScene(options) {
-  const { queue, tracker, config, deliverQuestion, onMounted } = options;
+  const { queue, tracker, config, deliverQuestion } = options;
 
   /**
    * @param {any} props
@@ -500,13 +368,6 @@ export function createJumpScene(options) {
     React.useEffect(() => {
       if (started.current) return;
       started.current = true;
-      // The scene is really on screen: stand the stranded-scene guard down
-      // before any await, so only a scene that never mounted can trip it.
-      try {
-        onMounted?.();
-      } catch {
-        // A guard that cannot be settled must not block the transition.
-      }
       if (target === undefined) {
         close();
         return;

@@ -4,25 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.4] - 2026-11-06
+## [0.1.5] - 2026-11-06
 
-### Fixed
+### Changed
 
-- Clicking a row while a questionnaire or plan review is pending no longer
-  leaves that panel full-screen. dsh-TUI paints a pending panel full-screen
-  whenever a full-screen page is open, and that interrupt lane sits above the
-  plugin-scene branch: the transition scene was accepted but never mounted, so
-  its `close()` never ran, `pluginScene` stayed current, and the review owned
-  the terminal until it was answered. A `createSceneGuard` now arms before the
-  open and settles from the scene's first effect; a scene that has not mounted
-  within 600 ms is closed through the same activation (`tuiScenes.close()`
-  passes the owner check), the one-shot target is dropped, and the panel says
-  "有未回答的提问或审批，先处理它再切换会话" / "Answer the pending question or
-  approval before switching" instead of appearing to hang.
-- A parked background question is now released after the transition scene has
-  closed (`performJump` closes synchronously, `deliver()` runs on the next
-  task). Releasing first flashed the review over the alternate screen for a
-  frame; it now always lands in the chat column with the sidebar visible.
+- Rolled back the transient `createSceneGuard` / deferred-question-release
+  change that shipped in 0.1.4: jumping from the inbox stopped working for some
+  setups, so 0.1.5 restores the 0.1.3 behaviour byte for byte. The full-screen
+  plan-review investigation stays documented in the repository history
+  (`b52fca5`); 0.1.4 remains on the registry because a published version cannot
+  be withdrawn. Pin `0.1.5` (or `0.1.3`) if you need the pre-0.1.4 behaviour.
 
 ## [0.1.3] - 2026-11-04
 
@@ -57,7 +48,7 @@ All notable changes to this project are documented here. The format follows
   questions before running, running before done), and an exact anchor tie falls
   back to the first-seen slot, then to the path.
 
-[0.1.4]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.3...v0.1.4
+[0.1.5]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.3...v0.1.5
 [0.1.3]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.1...v0.1.2
 
