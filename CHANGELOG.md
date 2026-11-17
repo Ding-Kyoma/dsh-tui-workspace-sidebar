@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-11-17
+
+### Fixed
+
+- The panel now settles on its **admitted** id `workspace-sidebar:inbox`
+  instead of the anonymous, session-scoped `session:actN:inbox`. dsh-TUI binds
+  a third-party activation's Component identity a moment after `apply`, so a
+  panel registered in the same tick as activation used to be namespaced with a
+  throwaway id: `/settings` refused to remember it (it showed up as a
+  run-local "temporary panel #N") and no `sidePanel.panels` value could name
+  it, which also made the panel impossible to pin first in the tab bar. A
+  registration made a moment later gets the durable id, so the plugin now
+  re-registers on an escalating ladder (1s / 2s / 4s / 8s) and swaps the
+  anonymous registration for the admitted one; the ladder stops as soon as the
+  durable id is in use and leaves a single anonymous panel behind on a host
+  that never admits it. The badge/`/ws` handle follows the swap, and the
+  timers are unref'd so a pending upgrade never keeps the process alive.
+- Tests cover the swap, the already-admitted case (no churn) and the
+  never-admitted case (exactly one panel survives the whole ladder).
+
 ## [0.1.5] - 2026-11-06
 
 ### Changed

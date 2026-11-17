@@ -211,20 +211,36 @@ export function apply(ctx, config = {}) {
     }
 
     /**
+     * Every panel id the host currently holds ('' on a broken list call).
+     *
+     * @param {any} panels
+     * @returns {string[]}
+     */
+    function listPanelIds(panels) {
+      try {
+        const list = panels.list();
+        if (!Array.isArray(list)) return [];
+        return list
+          .map(entry => (entry && typeof entry.id === 'string' ? entry.id : ''))
+          .filter(id => id !== '');
+      } catch (error) {
+        warn('panels.list() failed', error);
+        return [];
+      }
+    }
+
+    /**
+     * The final id of this plugin's panel. Prefers an admitted address: while a
+     * replacement registration is in flight the registry briefly holds the
+     * anonymous `session:actN:inbox` next to the persistent
+     * `workspace-sidebar:inbox`.
+     *
      * @param {any} panels
      * @returns {string} the host-assigned id, or '' when it cannot be resolved
      */
     function resolvePanelId(panels) {
-      try {
-        const list = panels.list();
-        if (!Array.isArray(list)) return '';
-        const suffix = `:${PANEL_SUB_ID}`;
-        const found = list.find(entry => entry && typeof entry.id === 'string' && entry.id.endsWith(suffix));
-        return found ? found.id : '';
-      } catch (error) {
-        warn('panels.list() failed', error);
-        return '';
-      }
+      const mine = listPanelIds(panels).filter(id => id.endsWith(`:${PANEL_SUB_ID}`));
+      return mine.find(id => !id.startsWith('session:')) ?? mine[0] ?? '';
     }
 
     /**
@@ -405,6 +421,57 @@ export function apply(ctx, config = {}) {
     }
 
     /**
+     * The host namespaces a plugin panel with the *admitted* component id
+     * (`workspace-sidebar:inbox`). Admission binds that identity a moment
+     * after `apply`, while this plugin registers its panel in the same tick —
+     * so the first id it gets is the anonymous, session-scoped
+     * `session:actN:inbox`, which `/settings` refuses to remember and no
+     * `sidePanel.panels` value can name.
+     *
+     * Re-register on an escalating ladder until the persistent id arrives
+     * (measured: a re-registration ~2s after boot already yields it). The
+     * disposer installed on `ready.effect` reads `dispose` at teardown time,
+     * so swapping the registration keeps teardown correct.
+     *
+     * @param {any} ready
+     * @param {() => boolean} swap re-registers the panel; true once the admitted id is in use
+     */
+    function upgradePanelId(ready, swap) {
+      if (typeof swap !== 'function' || !panelId.startsWith('session:')) return;
+      const delays = [1000, 2000, 4000, 8000];
+      let stopped = false;
+      if (typeof ready.effect === 'function') {
+        try {
+          // `effect` runs the callback now and takes its *return value* as the
+          // teardown, so the flag must be wrapped once more.
+          ready.effect(() => () => {
+            stopped = true;
+          }, 'workspace-sidebar panel id upgrade');
+        } catch (error) {
+          warn('binding the panel id upgrade to the activation failed', error);
+        }
+      }
+      const step = index => {
+        if (stopped || !panelId.startsWith('session:')) return;
+        const delay = delays[index];
+        if (delay === undefined) return;
+        const timer = setTimeout(() => {
+          if (stopped || !panelId.startsWith('session:')) return;
+          try {
+            swap();
+          } catch (error) {
+            warn('re-registering the panel for a persistent id failed', error);
+          }
+          step(index + 1);
+        }, delay);
+        // A pending upgrade must never keep the process alive on its own: the
+        // panel is already usable under the anonymous id.
+        if (typeof timer?.unref === 'function') timer.unref();
+      };
+      step(0);
+    }
+
+    /**
      * @param {any} ready
      * @param {any} panels
      */
@@ -449,6 +516,32 @@ export function apply(ctx, config = {}) {
       } else {
         tracker.setPanelHandle(panels, panelId);
       }
+      upgradePanelId(ready, () => {
+        const before = new Set(listPanelIds(panels));
+        const next = panels.register({
+          apiVersion: 1,
+          id: PANEL_SUB_ID,
+          title: copy.title,
+          icon: PANEL_ICON,
+          order: PANEL_ORDER,
+          component: Panel,
+        }, ready);
+        if (typeof next !== 'function') return false;
+        const previous = dispose;
+        dispose = next;
+        // Name the address *this* registration got: scanning for "the" inbox
+        // would also match the anonymous panel still parked in the registry.
+        const registered = listPanelIds(panels).find(id => id.endsWith(`:${PANEL_SUB_ID}`) && !before.has(id)) ?? '';
+        if (registered === '') {
+          next();
+          dispose = previous;
+          return false;
+        }
+        panelId = registered;
+        tracker.setPanelHandle(panels, panelId);
+        if (typeof previous === 'function') previous();
+        return !panelId.startsWith('session:');
+      });
       return true;
     }
 
