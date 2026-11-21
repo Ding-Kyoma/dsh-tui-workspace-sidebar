@@ -179,7 +179,7 @@ function createHarness(getSnapshot = snapshot, options = {}) {
   function render() {
     cursor = 0;
     depth += 1;
-    const tree = component({ React, ui, host, width: 40, height: options.height ?? 10, focused: options.focused ?? true, visible: true });
+    const tree = component({ React, ui, host, width: options.width ?? 40, height: options.height ?? 10, focused: options.focused ?? true, visible: true });
     depth -= 1;
     if (depth === 0) {
       // Mount effects once the tree is built, like React does after a commit.
@@ -349,6 +349,46 @@ test('panel: project counters and rows animate while the header stays static', (
   assert.equal(counterGlyphs[0].props.color, undefined, 'the folder icon stays muted');
   assert.equal(counterGlyphs[0].props.dimColor, true);
   assert.equal(runGlyph.props.color, 'suggestion', 'the row keeps its running colour');
+});
+
+test('panel: a long title takes free space instead of shrinking the status glyph', () => {
+  // The row title used to contribute its full intrinsic width as a flex basis.
+  // On a narrow panel that made the row overflow, and Yoga shrank every
+  // `flexShrink: 1` leaf — including Ink's one-cell glyph Text — below one
+  // column, where the painter drew nothing. The title box must start at zero:
+  // it grows into the free columns and no sibling ever enters the shrink pass.
+  const longRow = makeRow({
+    id: 'long',
+    title: '整理剑雅12题库并校验导入格式',
+    status: 'running',
+    finishedAt: 0,
+    seenAt: 0,
+    updatedAt: NOW - 60_000,
+    runningAt: NOW - 120_000,
+  });
+  const rows = [longRow, makeRow({ id: 'cur', title: '修复登录页样式' })];
+  const harness = createHarness(() => ({
+    groups: [{ key: '/repo/app', cwd: '/repo/app', title: 'IELTS', running: 1, unread: 0, rows }],
+    running: 1,
+    unread: 0,
+    flatRows: rows,
+    currentId: 'cur',
+    agentsAvailable: true,
+    version: 1,
+  }), { width: 32 });
+
+  const tree = harness.render();
+  const row = findBox(tree, 'long');
+  const title = findBox(row, 'title:long');
+  assert.ok(title, 'the title has its own box');
+  assert.equal(title.props.flexBasis, 0, 'the title contributes no intrinsic width to the row');
+  assert.equal(title.props.flexGrow, 1, 'it grows into the columns the chrome leaves');
+  assert.equal(title.props.flexShrink, 1);
+  assert.equal(title.props.minWidth, 0);
+
+  const glyphs = directTexts(row);
+  assert.equal(textOf(glyphs[0]), RUNNING_FRAMES[0], 'the status glyph keeps its full cell');
+  assert.equal(textOf(glyphs[1]), ' ', 'the glyph still owns the spacer after it');
 });
 
 test('panel: the current row has no fill, hover fills it and leaving clears it', () => {

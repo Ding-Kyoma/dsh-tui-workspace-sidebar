@@ -511,9 +511,25 @@ export function createPanel(options) {
         h(Box, { width: 2, flexShrink: 0 }, h(Text, { color: focused && isSelected ? 'accent' : undefined }, focused && isSelected ? '❯' : ' ')),
         h(Text, { color: glyph.color, bold, dimColor: glyph.dim }, glyph.char),
         h(Text, null, ' '),
+        // The title is the row's only flexible cell, and its flex basis is
+        // deliberately zero. With the default `auto` basis a long title made
+        // the row's hypothetical size exceed the panel width, so Yoga handed
+        // the negative free space to every `flexShrink: 1` leaf — including
+        // Ink's one-cell status glyph and its spacer. Those shrank below one
+        // column, where the painter draws nothing, and the spinner (or the
+        // unread dot / seen check) vanished while the title itself still
+        // truncated. Starting the title at zero takes the intrinsic width out
+        // of the sum: it grows into exactly the columns the chrome leaves, and
+        // no sibling ever enters the shrink pass.
         h(
           Box,
-          { flexGrow: 1, flexShrink: 1, minWidth: 0 },
+          {
+            key: `title:${row.id}`,
+            flexBasis: 0,
+            flexGrow: 1,
+            flexShrink: 1,
+            minWidth: 0,
+          },
           h(Text, {
             bold,
             color: emphasized ? 'accent' : undefined,

@@ -63,7 +63,9 @@ process:
   by `dsh-plan-mode`) spins in the theme's plan colour — sage green on the
   default dark palette, the same role the status line uses — while the
   project counter stays muted. Only a running row is coloured; a finished
-  conversation never keeps it.
+  conversation never keeps it. The status glyph owns a fixed column: on a
+  narrow panel a long title truncates with `…` before it instead of squeezing
+  the spinner, dot or check away.
 - **Finished but unread** — a turn ended while you were in another session. The
   row shows a solid dot `●` (`✕` when the turn failed) and is bold for the
   first few seconds.
@@ -577,7 +579,8 @@ the padded `+` after the status icons), the
 animated row glyphs and icon-only project counters (the same character as the
 row glyphs at every frame, still in the muted header colour; the header total
 is static and holds the numbers), the plan-mode spinner colour (row-only), the
-per-project cap on read rows (running and
+zero-basis title cell that keeps a long title from shrinking the status glyph,
+the per-project cap on read rows (running and
 unread exempt, attached row pinned), the height-adaptive folding of read rows
 (cap lowered until the grouped list fits, a floor of three per project, and a
 taller panel revealing the folded rows again), the right-pointing project glyph,
