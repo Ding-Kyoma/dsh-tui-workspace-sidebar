@@ -14,7 +14,7 @@ function makeAgent({ id, status = 'idle', cwd = '/repo/app', origin = 'user', ev
   };
 }
 
-function makeCtx({ getAgents } = {}) {
+function makeCtx({ getAgents, workspaces, ledger = workspaces !== undefined } = {}) {
   const listeners = new Map();
   let agents = getAgents;
   const ctx = {
@@ -30,6 +30,8 @@ function makeCtx({ getAgents } = {}) {
     },
     get(name, fallback) {
       if (name === 'agents') return agents ?? fallback;
+      if (name === 'tuiWorkspaces') return workspaces ?? fallback;
+      if (name === 'workspaceRegistry') return ledger ? { list: () => [] } : fallback;
       return fallback;
     },
     inject() {},
@@ -72,11 +74,24 @@ function planEvent(active, time = 100) {
   return { type: 'plan/mode', time, data: { active } };
 }
 
-function makeTracker({ agents = [], store = makeStore(), clock = () => 1_000, probe, retentionMs } = {}) {
-  const harness = makeCtx({ getAgents: { list: () => agents } });
+function makeTracker({ agents = [], store = makeStore(), clock = () => 1_000, probe, retentionMs, workspaces, ledger } = {}) {
+  const harness = makeCtx({ getAgents: { list: () => agents }, workspaces, ledger });
   const tracker = createTracker({ ctx: harness.ctx, store, logger: { warn() {} }, now: clock, probe, retentionMs });
   tracker.attach();
   return { tracker, harness, store };
+}
+
+/** A mutable `tuiWorkspaces` stub; `set()` replaces the ledger snapshot. */
+function makeWorkspaces(paths = [], titles = {}) {
+  let list = [...paths];
+  return {
+    listRegistry() {
+      return list.map(path => ({ path, title: titles[path] ?? '', present: true }));
+    },
+    set(next) {
+      list = [...next];
+    },
+  };
 }
 
 test('attach seeds a running agent with its title', () => {
@@ -417,22 +432,173 @@ test('badge counts unread while hidden and clears when visible', async () => {
   assert.equal(calls.at(-1).badge, null);
 });
 
-test('workspace registry titles are used for groups', () => {
-  let clock = 1_000;
+test('workspace registry titles are used for groups', async () => {
   const agent = makeAgent({ id: 'a', status: 'running', events: [promptEvent('fix it')] });
-  const harness = makeCtx({ getAgents: { list: () => [agent] } });
-  const workspaces = { listRegistry: () => [{ path: '/repo/app', title: 'My Project' }] };
-  const ctx = {
-    ...harness.ctx,
-    get(name, fallback) {
-      if (name === 'tuiWorkspaces') return workspaces;
-      return harness.ctx.get(name, fallback);
+  const workspaces = makeWorkspaces(['/repo/app'], { '/repo/app': 'My Project' });
+  const { tracker } = makeTracker({ agents: [agent], workspaces });
+  await tracker.refreshWorkspaces();
+  assert.equal(tracker.getSnapshot().groups[0].title, 'My Project');
+});
+
+test('a workspace removed from the ledger leaves the inbox and the badge', async () => {
+  const calls = [];
+  const panels = {
+    badge(id, badge) {
+      calls.push({ id, badge });
+      return true;
     },
   };
-  const tracker = createTracker({ ctx, store: makeStore(), logger: { warn() {} }, now: () => clock });
-  tracker.attach();
-  tracker.refreshWorkspaces();
-  assert.equal(tracker.getSnapshot().groups[0].title, 'My Project');
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', cwd: '/repo/gone', events: [promptEvent('fix it')] });
+  const workspaces = makeWorkspaces(['/repo/gone']);
+  const { tracker, harness } = makeTracker({ agents: [agent], clock: () => clock, workspaces });
+  await tracker.refreshWorkspaces();
+  tracker.setPanelHandle(panels, 'workspace-sidebar:inbox');
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['a']);
+
+  clock = 2_000;
+  agent.status = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  assert.deepEqual(calls.at(-1).badge, { level: 'info', unread: 1 });
+  assert.equal(tracker.getSnapshot().unread, 1);
+
+  workspaces.set([]);
+  clock = 3_000;
+  await tracker.refreshWorkspaces();
+  const snapshot = tracker.getSnapshot();
+  assert.deepEqual(snapshot.groups, []);
+  assert.deepEqual(snapshot.flatRows, []);
+  assert.equal(snapshot.unread, 0);
+  assert.equal(calls.at(-1).badge, null);
+});
+
+test('a host without the durable ledger keeps its persisted rows', async () => {
+  const now = 5_000;
+  const store = makeStore({
+    gone: {
+      id: 'gone',
+      cwd: '/repo/gone',
+      title: 'Gone',
+      status: 'finished',
+      failed: false,
+      updatedAt: now - 1_000,
+      finishedAt: now - 1_000,
+      seenAt: 0,
+    },
+  });
+  const workspaces = makeWorkspaces([]);
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now, workspaces, ledger: false });
+  await tracker.load();
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['gone']);
+});
+
+test('a live row seeded before the first ledger read is filtered once it lands', async () => {
+  const agent = makeAgent({ id: 'a', status: 'running', cwd: '/repo/gone', events: [promptEvent('fix it')] });
+  const workspaces = makeWorkspaces(['/repo/other']);
+  const { tracker } = makeTracker({ agents: [agent], workspaces });
+  // attach() seeded the live row while the ledger generation was still 0.
+  await tracker.load();
+  assert.deepEqual(tracker.getSnapshot().flatRows, []);
+});
+
+test('an empty mounted ledger hides cwd rows but keeps the unknown bucket', async () => {
+  const now = 5_000;
+  const finished = (id, cwd) => ({
+    id,
+    cwd,
+    title: id,
+    status: 'finished',
+    failed: false,
+    updatedAt: now - 1_000,
+    finishedAt: now - 1_000,
+    seenAt: 0,
+  });
+  const store = makeStore({
+    gone: finished('gone', '/repo/gone'),
+    loose: finished('loose', ''),
+  });
+  const workspaces = makeWorkspaces([]);
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now, workspaces });
+  await tracker.load();
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['loose']);
+});
+
+test('load hides a persisted row whose workspace is no longer in the ledger', async () => {
+  const now = 5_000;
+  const finished = (id, cwd) => ({
+    id,
+    cwd,
+    title: id,
+    status: 'finished',
+    failed: false,
+    updatedAt: now - 1_000,
+    finishedAt: now - 1_000,
+    seenAt: 0,
+  });
+  const store = makeStore({
+    kept: finished('kept', '/repo/app'),
+    gone: finished('gone', '/repo/gone'),
+  });
+  const workspaces = {
+    async listRegistry() {
+      return [{ path: '/repo/app', title: 'App' }];
+    },
+  };
+  const { tracker } = makeTracker({ agents: [], store, clock: () => now, workspaces });
+  await tracker.load();
+  const snapshot = tracker.getSnapshot();
+  assert.deepEqual(snapshot.flatRows.map(row => row.id), ['kept']);
+  assert.deepEqual(snapshot.groups.map(group => group.title), ['App']);
+  assert.equal(store.snapshot().sessions.gone.id, 'gone', 'the row is retained, only hidden');
+});
+
+test('a failed or malformed ledger read never hides rows', async () => {
+  const readers = [
+    () => { throw new Error('boom'); },
+    async () => { throw new Error('boom'); },
+    () => undefined,
+  ];
+  for (const listRegistry of readers) {
+    const agent = makeAgent({ id: 'a', status: 'running', cwd: '/repo/app', events: [promptEvent('fix it')] });
+    const { tracker } = makeTracker({ agents: [agent], workspaces: { listRegistry } });
+    await tracker.refreshWorkspaces();
+    assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['a']);
+  }
+});
+
+test('a row first seen after the ledger snapshot survives until the next read', async () => {
+  let clock = 1_000;
+  const agents = [];
+  const workspaces = makeWorkspaces([]);
+  const { tracker } = makeTracker({ agents, clock: () => clock, workspaces });
+  await tracker.refreshWorkspaces();
+  assert.equal(tracker.getSnapshot().flatRows.length, 0);
+
+  clock = 2_000;
+  agents.push(makeAgent({ id: 'late', status: 'running', cwd: '/repo/new', events: [promptEvent('new turn')] }));
+  tracker.reconcile();
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['late']);
+
+  clock = 3_000;
+  await tracker.refreshWorkspaces();
+  assert.deepEqual(tracker.getSnapshot().flatRows, []);
+});
+
+test('a parked question stays reachable after its workspace is removed', async () => {
+  let clock = 1_000;
+  const agent = makeAgent({ id: 'a', status: 'running', cwd: '/repo/gone', events: [promptEvent('fix it')] });
+  const workspaces = makeWorkspaces(['/repo/gone']);
+  const { tracker } = makeTracker({ agents: [agent], clock: () => clock, workspaces });
+  await tracker.refreshWorkspaces();
+  tracker.setWaiting('a', true);
+
+  workspaces.set([]);
+  clock = 2_000;
+  await tracker.refreshWorkspaces();
+  assert.deepEqual(tracker.getSnapshot().flatRows.map(row => row.id), ['a']);
+
+  tracker.setWaiting('a', false);
+  assert.deepEqual(tracker.getSnapshot().flatRows, []);
 });
 
 test('a missing agents service degrades without throwing', () => {

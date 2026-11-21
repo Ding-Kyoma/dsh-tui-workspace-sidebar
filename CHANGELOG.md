@@ -4,7 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.7] - 2026-11-21
+## [0.1.8] - 2026-11-21
+
+### Fixed
+
+- Conversations in a workspace removed from dsh-TUI's durable workspace ledger
+  no longer linger in the inbox. The tracker now scopes rows — and the unread
+  badge — to the paths the ledger still registers; the panel reads the ledger at
+  startup, on mount and on `r`, so a removed workspace's group disappears on
+  the next read. Persisted rows and session logs are retained, and registering
+  the directory again brings the rows back while they are inside the retention
+  window. The filter is fail-open for hosts without the ledger service
+  (lite/non-DSH kernels), leaves empty-cwd rows in the unknown-project bucket,
+  keeps a row first observed after the latest ledger read (the host attaches a
+  session asynchronously), and keeps a parked question visible so its blocked
+  turn can still be answered.
+- Regression tests cover the removed-workspace snapshot and badge, the empty
+  mounted ledger, the lite host, failed and malformed reads, the new-row grace
+  and the parked-question exception.
+
+
 
 ### Fixed
 
@@ -83,6 +102,7 @@ All notable changes to this project are documented here. The format follows
   questions before running, running before done), and an exact anchor tie falls
   back to the first-seen slot, then to the path.
 
+[0.1.8]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.3...v0.1.5
