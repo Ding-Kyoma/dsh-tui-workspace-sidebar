@@ -13,7 +13,7 @@ A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 This is a community plugin, not an official dsh-TUI component. It is built
 against dsh-TUI 0.17.0 and uses only public host seams.
 
-> **Status:** published as `dsh-tui-workspace-sidebar@0.1.3`. Install with
+> **Status:** published as `dsh-tui-workspace-sidebar@0.1.7`. Install with
 > `dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar`; the checkout
 > install below remains available for development.
 

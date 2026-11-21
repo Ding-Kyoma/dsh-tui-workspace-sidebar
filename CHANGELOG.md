@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-11-21
+
+### Fixed
+
+- A long conversation title on a narrow sidebar no longer squeezes the row's
+  status glyph out of existence. The row title used to contribute its full
+  intrinsic width as a flex basis, so an overflowing row handed the negative
+  free space to every `flexShrink: 1` leaf — including the one-cell spinner,
+  unread dot or seen check. Those shrank below a column and the painter drew
+  nothing, which made the animation (and every other status glyph) vanish from
+  long-title rows. The title now starts at `flexBasis: 0` and grows into the
+  columns the fixed chrome leaves, so only the title truncates with `…`.
+- A regression test pins the zero-basis title cell at a narrow width; the
+  README documents the fixed status-glyph column.
+
 ## [0.1.6] - 2026-11-17
 
 ### Fixed
@@ -68,6 +83,8 @@ All notable changes to this project are documented here. The format follows
   questions before running, running before done), and an exact anchor tie falls
   back to the first-seen slot, then to the path.
 
+[0.1.7]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.3...v0.1.5
 [0.1.3]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Ding-Kyoma/dsh-tui-workspace-sidebar/compare/v0.1.1...v0.1.2
