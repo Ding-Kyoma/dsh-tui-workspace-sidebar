@@ -13,6 +13,16 @@
  * itself uses to describe a session; anything older than this process is not
  * visible to the plugin at all (dsh-tui 0.17.0 exposes no cross-process roster).
  *
+ * Inbox membership follows the durable workspace ledger when the host mounts
+ * one. A workspace removed from dsh-TUI's home rail therefore disappears from
+ * this list (and from the unread badge) at the next ledger read — startup, a
+ * panel mount, or `r` — even though its rows stay in the persisted state file.
+ * The filter is fail-open: a host without the ledger service (lite/non-DSH
+ * kernels) keeps listing rows restored from disk. A row first observed after
+ * the latest ledger snapshot is also kept for a moment, because the host
+ * attaches a session to its workspace asynchronously, and a parked question
+ * must remain reachable or its turn can never be answered.
+ *
  * Ordering is class-first, then anchored to state changes rather than events.
  * Rows are listed as unread finishes, then running conversations, then the ones
  * already dealt with; inside a class a running row is anchored to its current
@@ -33,6 +43,7 @@ import {
   isAttention,
   isUnread,
   isVisible,
+  isWaiting,
   nextExpiry,
   normalizeCwd,
   pruneRows,
@@ -156,6 +167,28 @@ export function createTracker(options) {
   const waitingIds = new Set();
   /** @type {{path: string, title: string}[]} */
   let registry = [];
+  /** Normalized paths of the workspaces in the latest ledger snapshot. */
+  const registered = new Set();
+  /**
+   * Whether the ledger has ever been read successfully. A host that does not
+   * mount the durable registry (lite/non-DSH kernels) never sets this, so its
+   * persisted rows keep the old fail-open behaviour.
+   */
+  let registryKnown = false;
+  /** How many successful ledger reads have landed. */
+  let registryGeneration = 0;
+  /**
+   * The ledger generation a row was first observed in. The host attaches a
+   * session to its workspace asynchronously, so a brand-new row can briefly
+   * name a workspace the cached snapshot has not seen yet. Rows first seen in
+   * the current generation are kept until the next successful read; a removed
+   * workspace's older rows never qualify. Restored rows have no entry and are
+   * filtered immediately.
+   * @type {Map<string, number>}
+   */
+  const firstSeenGeneration = new Map();
+  /** @type {Promise<void> | undefined} */
+  let refreshing;
   let agentsService;
   let currentId = '';
   let panelVisible = false;
@@ -226,9 +259,65 @@ export function createTracker(options) {
     }
   }
 
+  /**
+   * Drop a row and its grace marker together. Sweeps that mutate `rows`
+   * directly (the model's `pruneRows`) are followed by `sweepFirstSeen()`.
+   * @param {string} id
+   */
+  function forgetRow(id) {
+    rows.delete(id);
+    firstSeenGeneration.delete(id);
+  }
+
+  /**
+   * Drop grace markers whose rows are gone.
+   */
+  function sweepFirstSeen() {
+    for (const id of firstSeenGeneration.keys()) {
+      if (!rows.has(id)) firstSeenGeneration.delete(id);
+    }
+  }
+
+  /**
+   * Whether a tracked row belongs on the inbox surface right now.
+   *
+   * The durable workspace ledger is the authority for which workspaces exist.
+   * A row whose cwd is no longer registered is hidden, but the rule is
+   * fail-open in every case where the plugin cannot know:
+   *
+   * - before the first successful ledger read;
+   * - on a host with no durable ledger at all (lite/non-DSH kernels);
+   * - for the empty-cwd bucket, which has no workspace to match;
+   * - for a row first observed in the current ledger generation, because the
+   *   host attaches a session to its workspace asynchronously;
+   * - for a parked question, which must stay reachable or its turn hangs.
+   *
+   * @param {any} row
+   * @returns {boolean}
+   */
+  function isInboxRow(row) {
+    if (!row || typeof row !== 'object') return false;
+    const path = normalizeCwd(row.cwd);
+    if (path === '') return true;
+    if (!registryKnown) return true;
+    if (registered.has(path)) return true;
+    if (isWaiting(row)) return true;
+    const firstSeen = firstSeenGeneration.get(row.id);
+    return firstSeen !== undefined && firstSeen === registryGeneration;
+  }
+
+  function inboxRows() {
+    const out = [];
+    for (const row of rows.values()) {
+      if (isInboxRow(row)) out.push(row);
+    }
+    return out;
+  }
+
   function unreadRows() {
     const out = [];
     for (const [id, row] of rows) {
+      if (!isInboxRow(row)) continue;
       if (currentId !== '' && id === currentId) continue;
       if (isAttention(row)) out.push(row);
     }
@@ -324,10 +413,11 @@ export function createTracker(options) {
       // Outlived the retention window, or a zero window that only keeps unread
       // rows. A never-tracked unseen row is simply ignored.
       if (prev === undefined) return false;
-      rows.delete(id);
+      forgetRow(id);
       return true;
     }
     if (prev !== undefined && sameRow(prev, next)) return false;
+    if (prev === undefined) firstSeenGeneration.set(id, registryGeneration);
     rows.set(id, next);
     return true;
   }
@@ -449,11 +539,12 @@ export function createTracker(options) {
           now,
         });
         if (next !== undefined) rows.set(id, next);
-        else rows.delete(id);
+        else forgetRow(id);
         changed = true;
       }
     }
     if (pruneRows(rows, maxRows, now, { currentId, retentionMs }) > 0) changed = true;
+    sweepFirstSeen();
 
     if (changed) {
       persist();
@@ -501,48 +592,89 @@ export function createTracker(options) {
       now,
     });
     if (next !== undefined && isVisible(next, { currentId, now, retentionMs })) rows.set(id, next);
-    else rows.delete(id);
+    else forgetRow(id);
     persist();
     bump();
   }
 
-  function applyRegistry(list) {
-    const next = [];
-    if (Array.isArray(list)) {
-      for (const entry of list) {
-        if (!entry || typeof entry !== 'object') continue;
-        const path = normalizeCwd(entry.path);
-        if (path === '') continue;
-        next.push({ path, title: typeof entry.title === 'string' ? entry.title : '' });
-      }
+  /**
+   * Whether the host mounts the durable workspace registry. A lite/non-DSH
+   * composition also provides `tuiWorkspaces`, but its local runtime has no
+   * ledger and returns an always-empty `listRegistry()`; that empty list must
+   * not be treated as "every workspace was removed".
+   * @returns {boolean}
+   */
+  function ledgerMounted() {
+    try {
+      return Boolean(typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry', false) : undefined);
+    } catch {
+      return false;
     }
-    const before = JSON.stringify(registry);
-    const after = JSON.stringify(next);
-    if (before === after) return;
+  }
+
+  /**
+   * Replace the cached ledger snapshot. Always bumps: a fresh snapshot may
+   * retire the grace of a row that is still absent, even when the titles did
+   * not change.
+   * @param {unknown} list
+   */
+  function applyRegistry(list) {
+    if (disposed || !Array.isArray(list)) return;
+    const next = [];
+    const paths = new Set();
+    for (const entry of list) {
+      if (!entry || typeof entry !== 'object') continue;
+      const path = normalizeCwd(entry.path);
+      if (path === '') continue;
+      next.push({ path, title: typeof entry.title === 'string' ? entry.title : '' });
+      paths.add(path);
+    }
     registry = next;
+    registered.clear();
+    for (const path of paths) registered.add(path);
+    // Keep the last-known-good authority: a read that suddenly looks empty on
+    // a host whose registry service is gone must not resurrect removed rows.
+    if (ledgerMounted() || next.length > 0) registryKnown = true;
+    registryGeneration += 1;
     bump();
   }
 
+  /**
+   * Read the durable workspace ledger. Returns the in-flight read so a load and
+   * a panel mount in the same tick share one fs sweep.
+   * @returns {Promise<void>}
+   */
   function refreshWorkspaces() {
-    if (disposed) return;
+    if (disposed) return Promise.resolve();
+    if (refreshing !== undefined) return refreshing;
     let service;
     try {
       service = typeof ctx?.get === 'function' ? ctx.get('tuiWorkspaces', false) : undefined;
     } catch (error) {
       warn('tuiWorkspaces is unavailable', error, logger);
-      return;
+      return Promise.resolve();
     }
-    if (!service || typeof service.listRegistry !== 'function') return;
+    if (!service || typeof service.listRegistry !== 'function') return Promise.resolve();
+    let result;
     try {
-      const result = service.listRegistry();
-      if (result && typeof result.then === 'function') {
-        void result.then(applyRegistry).catch(error => warn('listRegistry() failed', error, logger));
-        return;
-      }
-      applyRegistry(result);
+      result = service.listRegistry();
     } catch (error) {
       warn('listRegistry() failed', error, logger);
+      return Promise.resolve();
     }
+    if (result && typeof result.then === 'function') {
+      refreshing = Promise.resolve(result)
+        .then(applyRegistry)
+        .catch(error => {
+          warn('listRegistry() failed', error, logger);
+        })
+        .finally(() => {
+          refreshing = undefined;
+        });
+      return refreshing;
+    }
+    applyRegistry(result);
+    return Promise.resolve();
   }
 
   async function load() {
@@ -573,11 +705,14 @@ export function createTracker(options) {
         attached.seenAt = Math.max(Number(attached.finishedAt) || 0, now);
       }
       pruneRows(rows, maxRows, now, { currentId, retentionMs });
+      sweepFirstSeen();
+      // Read the ledger before the first bump so a removed workspace's
+      // persisted rows never flash back onto the panel on startup.
+      await refreshWorkspaces();
       // First write after load: capture live rows seeded by attach() and drop
       // persisted rows that are no longer actionable.
       persist();
       bump();
-      refreshWorkspaces();
       reconcile();
     })();
     return loading;
@@ -670,7 +805,7 @@ export function createTracker(options) {
 
   function getSnapshot() {
     if (snapshot === undefined) {
-      const groups = buildGroups([...rows.values()], registry, currentId, {
+      const groups = buildGroups(inboxRows(), registry, currentId, {
         now: clock(),
         retentionMs,
       });

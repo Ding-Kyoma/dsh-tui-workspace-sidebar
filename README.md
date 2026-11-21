@@ -13,7 +13,7 @@ A light right-side panel for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 This is a community plugin, not an official dsh-TUI component. It is built
 against dsh-TUI 0.17.0 and uses only public host seams.
 
-> **Status:** published as `dsh-tui-workspace-sidebar@0.1.7`. Install with
+> **Status:** published as `dsh-tui-workspace-sidebar@0.1.8`. Install with
 > `dsh plugin --profile dsh-tui add dsh-tui-workspace-sidebar`; the checkout
 > install below remains available for development.
 
@@ -50,8 +50,9 @@ workspace.*
 
 ## What it shows
 
-Four kinds of conversations, across every workspace that is live in this TUI
-process:
+Four kinds of conversations, across every workspace that is still registered in
+dsh-TUI's durable workspace ledger (rows with no cwd stay in the
+unknown-project bucket):
 
 - **Running** — the session's agent is inside a turn. Row glyphs and each
   project's counter use the chat's own braille spinner, frame for frame (80
@@ -87,6 +88,17 @@ process:
   no longer removes it; the dot becomes a dim `✓` and the row stays for the
   rest of the retention window, so the place you just came from is still there.
   At most ten read rows are listed per project (see below).
+
+Inbox membership follows that ledger. Removing a workspace from dsh-TUI's home
+rail takes its group out of the inbox at the next ledger read — at startup, when
+the panel mounts, or when you press `r` — and the unread badge drops with it. The
+conversation logs and the persisted state row are untouched; registering the
+directory again brings any row still inside the retention window back. A row
+first observed after the latest ledger read stays visible until the next read,
+because the host attaches a session to its workspace asynchronously, and a
+parked question stays visible so its blocked turn can still be answered. On a
+host without the durable ledger service (lite/non-DSH kernels) the inbox keeps
+its previous fail-open behaviour and lists the rows restored from disk.
 
 A finished conversation — read or unread — is swept once it has been idle for
 **7 days** (`retentionHours`, configurable). The attached conversation is
@@ -522,7 +534,18 @@ the reporting path and the full data-handling note.
   its id.
 - **Non-DSH kernels.** A kernel that does not provide the `agents` service
   (for example the Claude/Codex adapters) gets recent rows from disk only; the
-  panel says so instead of pretending to be live.
+  panel says so instead of pretending to be live. Its lite workspace runtime
+  also has no durable ledger, so the ledger-scoped filtering is skipped and
+  those rows stay listed.
+- **The workspace ledger is the authority.** The inbox re-reads it at startup,
+  when the panel mounts and on `r`; it does not poll, because a read stats every
+  registered directory. A change made by another TUI process is observed only
+  once this process's registry refreshes. A directory that is merely missing on
+  disk (`present: false`) but still registered keeps its rows, matching
+  dsh-TUI's home rail; remove the registration there to make it leave the
+  inbox. A parked question in a workspace that was just removed stays listed
+  until the question settles — hiding it would leave the turn blocked with no
+  way back in.
 - **Pinned current row.** The attached conversation is never swept while it is
   attached, even after a long idle stretch. Switch away and it expires with the
   rest at the next sweep.
@@ -570,7 +593,11 @@ retention window (visibility, pruning, next-expiry), the current-session rule
 the ordering anchor inside them (running rows anchored to their turn start,
 finished rows to their finish marker, so concurrent running conversations never
 swap as their logs advance, and the workspace whose state changed most recently
-leads its class while in-turn activity leaves the group order alone), subagent
+leads its class while in-turn activity leaves the group order alone), the
+ledger-scoped inbox (a removed workspace leaves the snapshot and the badge, a
+lite host keeps its persisted rows, a failed or malformed read fails open, a
+newly observed row gets a read-to-read grace, and a parked question stays
+reachable), subagent
 and no-prompt filtering, grouping, store
 atomicity/corruption, the jump failure matrix, the new-session decision table
 (`/new` vs workspace handoff vs `/bg`, refusals and thrown host calls), the
